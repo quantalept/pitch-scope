@@ -27,6 +27,7 @@ class RealTimeAudioStream(
     )
 
     private var job: Job? = null
+    private var lastPitch = 0.0
 
     fun start() {
         if (job != null) return
@@ -39,16 +40,43 @@ class RealTimeAudioStream(
 
             while (isActive) {
                 val read = audioRecord.read(buffer, 0, buffer.size)
+                if (read <= 0) continue
 
-                if (read > 0) {
-                    val hz = detectPitch(buffer, read)
-
+                // 🔇 1. RMS volume gate (ignore silence / noise)
+                val rms = calculateRMS(buffer, read)
+                if (rms < 1200) {
+                    lastPitch = 0.0
                     withContext(Dispatchers.Main) {
-                        channel.invokeMethod("pitch", hz)
+                        channel.invokeMethod("pitch", -1.0)
                     }
+                    delay(40)
+                    continue
                 }
 
-                delay(40) // 🔹 Faster updates
+                // 🎯 2. Pitch detection
+                val hz = detectPitch(buffer, read)
+
+                // ❌ Invalid pitch guard
+                if (hz < 80 || hz > 1200) {
+                    withContext(Dispatchers.Main) {
+                        channel.invokeMethod("pitch", -1.0)
+                    }
+                    delay(40)
+                    continue
+                }
+
+                // 🧠 3. Temporal smoothing (reduces jitter)
+                val smoothedHz =
+                    if (lastPitch == 0.0) hz
+                    else lastPitch * 0.75 + hz * 0.25
+
+                lastPitch = smoothedHz
+
+                withContext(Dispatchers.Main) {
+                    channel.invokeMethod("pitch", smoothedHz)
+                }
+
+                delay(40) // readable speed
             }
         }
     }
@@ -56,14 +84,25 @@ class RealTimeAudioStream(
     fun stop() {
         job?.cancel()
         job = null
-        audioRecord.stop()
-        audioRecord.release() // 🔹 Release resources
+        if (audioRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+            audioRecord.stop()
+        }
+    }
+
+    // ---------- RMS (volume detection) ----------
+    private fun calculateRMS(buffer: ShortArray, size: Int): Double {
+        var sum = 0.0
+        for (i in 0 until size) {
+            val v = buffer[i].toDouble()
+            sum += v * v
+        }
+        return sqrt(sum / size)
     }
 
     // ---------- Pitch detection (autocorrelation) ----------
     private fun detectPitch(buffer: ShortArray, size: Int): Double {
-        val minLag = sampleRate / 1000  // ~44Hz
-        val maxLag = sampleRate / 50    // ~882Hz
+        val minLag = sampleRate / 1000   // ~44 Hz
+        val maxLag = sampleRate / 80     // ~550 Hz (human vocal focus)
 
         var bestLag = -1
         var bestCorr = 0.0

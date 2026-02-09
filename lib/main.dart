@@ -11,9 +11,9 @@ class PitchScopeApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: const PitchScreen(),
+      home: PitchScreen(),
     );
   }
 }
@@ -27,7 +27,9 @@ class PitchScreen extends StatefulWidget {
 
 class _PitchScreenState extends State<PitchScreen>
     with SingleTickerProviderStateMixin {
-  static const MethodChannel _channel = MethodChannel('live_audio_stream');
+
+  static const MethodChannel _channel =
+      MethodChannel('live_audio_stream');
 
   bool isRunning = false;
   double pitchHz = 0;
@@ -36,6 +38,11 @@ class _PitchScreenState extends State<PitchScreen>
   final List<double?> pitchHistory = [];
 
   late final AnimationController _controller;
+
+  // 🔹 SMOOTHING (fixes "too fast" feeling)
+  double smoothPitch(double previous, double current) {
+    return previous == 0 ? current : previous * 0.85 + current * 0.15;
+  }
 
   @override
   void initState() {
@@ -50,24 +57,40 @@ class _PitchScreenState extends State<PitchScreen>
       if (!isRunning) return;
 
       if (call.method == 'pitch') {
-        final hz = (call.arguments as num).toDouble();
+        final double hz = (call.arguments as num).toDouble();
 
+        // 🔇 SILENCE / NOISE FILTER
         if (hz < 60 || hz > 3000) {
-          pitchHistory.add(null);
+          setState(() {
+            pitchHz = 0;
+            pitchHistory.add(null);
+            if (pitchHistory.length > 220) {
+              pitchHistory.removeAt(0);
+            }
+          });
           return;
         }
 
-        final midi = hzToMidi(hz);
+        final int midi = hzToMidi(hz);
 
         if (lockedCenterMidi == null ||
             (midi - lockedCenterMidi!).abs() >= 1) {
           lockedCenterMidi = midi;
         }
 
+        final double last =
+            pitchHistory.isNotEmpty && pitchHistory.last != null
+                ? pitchHistory.last!
+                : hz;
+
+        final double smoothedHz = smoothPitch(last, hz);
+
         setState(() {
-          pitchHz = hz;
-          pitchHistory.add(hz);
-          if (pitchHistory.length > 220) pitchHistory.removeAt(0);
+          pitchHz = smoothedHz;
+          pitchHistory.add(smoothedHz);
+          if (pitchHistory.length > 220) {
+            pitchHistory.removeAt(0);
+          }
         });
       }
     });
@@ -91,22 +114,13 @@ class _PitchScreenState extends State<PitchScreen>
     });
   }
 
-  int hzToMidi(double hz) => (69 + 12 * log(hz / 440) / ln2).round();
+  int hzToMidi(double hz) =>
+      (69 + 12 * log(hz / 440) / ln2).round();
 
   String noteName(int midi) {
     const notes = [
-      'C',
-      'C#',
-      'D',
-      'D#',
-      'E',
-      'F',
-      'F#',
-      'G',
-      'G#',
-      'A',
-      'A#',
-      'B'
+      'C', 'C#', 'D', 'D#', 'E', 'F',
+      'F#', 'G', 'G#', 'A', 'A#', 'B'
     ];
     return notes[midi % 12];
   }
@@ -132,7 +146,6 @@ class _PitchScreenState extends State<PitchScreen>
             children: [
               const SizedBox(height: 48),
 
-              // TOP 3 LINES CENTERED
               if (lockedCenterMidi != null)
                 Column(
                   children: [
@@ -141,9 +154,7 @@ class _PitchScreenState extends State<PitchScreen>
                       style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 18,
-                        letterSpacing: 1.2,
                       ),
-                      textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 8),
                     Text(
@@ -152,49 +163,40 @@ class _PitchScreenState extends State<PitchScreen>
                         fontSize: 88,
                         fontWeight: FontWeight.w300,
                         color: Colors.white,
-                        letterSpacing: -2,
                       ),
-                      textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      pitchHz > 0 ? '${pitchHz.toStringAsFixed(0)} Hz' : '-- Hz',
+                      pitchHz > 0
+                          ? '${pitchHz.toStringAsFixed(0)} Hz'
+                          : '-- Hz',
                       style: const TextStyle(
                         color: Colors.white38,
                         fontSize: 16,
                       ),
-                      textAlign: TextAlign.center,
                     ),
                   ],
                 )
               else
-                Text(
+                const Text(
                   'Tap to start',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white70,
                     fontSize: 18,
                   ),
-                  textAlign: TextAlign.center,
                 ),
 
               const SizedBox(height: 24),
 
-              // PITCH GRAPH (full width, left-aligned)
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: AnimatedBuilder(
-                    animation: _controller,
-                    builder: (context, child) {
-                      return CustomPaint(
-                        painter: NeonPitchPainterWithDots(
-                          centerMidi: lockedCenterMidi,
-                          pitchHistory: pitchHistory,
-                          animationValue: _controller.value,
-                        ),
-                        size: Size.infinite,
-                      );
-                    },
+                  child: CustomPaint(
+                    painter: PitchPainterCrisp(
+                      centerMidi: lockedCenterMidi,
+                      pitchHistory: pitchHistory,
+                    ),
+                    size: Size.infinite,
                   ),
                 ),
               ),
@@ -208,51 +210,33 @@ class _PitchScreenState extends State<PitchScreen>
   }
 }
 
-/// NEON PITCH PAINTER WITH DOTS AND LABELS
-class NeonPitchPainterWithDots extends CustomPainter {
+class PitchPainterCrisp extends CustomPainter {
   final int? centerMidi;
   final List<double?> pitchHistory;
-  final double animationValue;
 
-  NeonPitchPainterWithDots({
+  PitchPainterCrisp({
     required this.centerMidi,
     required this.pitchHistory,
-    required this.animationValue,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 🔴 BACKGROUND WITH GRADIENT
-    final bgPaint = Paint()
-      ..shader = const LinearGradient(
-        colors: [
-          Color(0xFF050505),
-          Color(0xFF101010),
-          Color(0xFF050505),
-        ],
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
-
-    canvas.drawRect(Offset.zero & size, bgPaint);
-
     if (centerMidi == null) return;
 
     const visibleRows = 7;
-    final leftPadding = 16.0;
+    final leftPadding = 18.0;
     final rowHeight = size.height / visibleRows;
     final centerRow = visibleRows ~/ 2;
+
+    final gridPaint = Paint()
+      ..color = Colors.white10
+      ..strokeWidth = 1;
 
     final labelStyle = const TextStyle(
       color: Colors.white30,
       fontSize: 12,
     );
 
-    final gridPaint = Paint()
-      ..color = Colors.white10
-      ..strokeWidth = 1;
-
-    // horizontal grid + labels
     for (int i = 0; i < visibleRows; i++) {
       final midi = centerMidi! + (centerRow - i);
       final y = i * rowHeight;
@@ -275,36 +259,37 @@ class NeonPitchPainterWithDots extends CustomPainter {
       tp.paint(canvas, Offset(0, y + (rowHeight - tp.height) / 2));
     }
 
-    // neon line (change to white)
-final linePaint = Paint()
-  ..color = Colors.white // <-- change from gradient to plain white
-  ..strokeWidth = 3
-  ..style = PaintingStyle.stroke
-  ..strokeCap = StrokeCap.round
-  ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-
+    final linePaint = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
 
     final path = Path();
-    bool hasStarted = false;
+    bool started = false;
 
     for (int i = 0; i < pitchHistory.length; i++) {
       final pitch = pitchHistory[i];
       if (pitch == null) {
-        hasStarted = false;
+        started = false;
         continue;
       }
 
-      final x =
-          leftPadding + (size.width - leftPadding) * i / (pitchHistory.length - 1);
+      final x = leftPadding +
+          (size.width - leftPadding) *
+              i /
+              max(1, pitchHistory.length - 1);
+
       final midi = (69 + 12 * log(pitch / 440) / ln2).round();
       final rowOffset = centerRow - (midi - centerMidi!);
 
       if (rowOffset < 0 || rowOffset >= visibleRows) continue;
+
       final y = rowOffset * rowHeight + rowHeight / 2;
 
-      if (!hasStarted) {
+      if (!started) {
         path.moveTo(x, y);
-        hasStarted = true;
+        started = true;
       } else {
         path.lineTo(x, y);
       }
@@ -312,39 +297,18 @@ final linePaint = Paint()
 
     canvas.drawPath(path, linePaint);
 
-    // glowing dots
-    final dotPaint = Paint()
-      ..color = Colors.cyanAccent.withOpacity(0.5 + 0.5 * animationValue)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
-
-    for (int i = 0; i < pitchHistory.length; i++) {
-      final pitch = pitchHistory[i];
-      if (pitch == null) continue;
-
-      final x =
-          leftPadding + (size.width - leftPadding) * i / (pitchHistory.length - 1);
-      final midi = (69 + 12 * log(pitch / 440) / ln2).round();
-      final rowOffset = centerRow - (midi - centerMidi!);
-      if (rowOffset < 0 || rowOffset >= visibleRows) continue;
-
-      final y = rowOffset * rowHeight + rowHeight / 2;
-      canvas.drawCircle(Offset(x, y), 4, dotPaint);
-    }
-
-    // center line
     final centerY = centerRow * rowHeight + rowHeight / 2;
-    final centerLinePaint = Paint()
-      ..color = Colors.white24
-      ..strokeWidth = 1;
     canvas.drawLine(
       Offset(leftPadding, centerY),
       Offset(size.width, centerY),
-      centerLinePaint,
+      Paint()
+        ..color = Colors.white24
+        ..strokeWidth = 1,
     );
   }
 
   @override
-  bool shouldRepaint(covariant NeonPitchPainterWithDots oldDelegate) => true;
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 
   String _noteName(int midi) {
     const notes = [

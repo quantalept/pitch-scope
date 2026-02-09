@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'dart:math';
 
-
 void main() {
   runApp(const PitchApp());
 }
@@ -62,7 +61,6 @@ class _PitchScreenState extends State<PitchScreen> {
       backgroundColor: const Color(0xFF121212),
       body: Stack(
         children: [
-          // FULL SCREEN GRAPH
           Positioned.fill(
             child: PitchGraph(
               pitchStream: _pitchController.stream,
@@ -71,7 +69,6 @@ class _PitchScreenState extends State<PitchScreen> {
             ),
           ),
 
-          // TOP CENTER NOTE + HZ
           Positioned(
             top: 40,
             left: 0,
@@ -192,11 +189,11 @@ class PitchPainter extends CustomPainter {
 
     if (pitches.length < 2) return;
 
+    // ✅ ONLY CHANGE IS HERE (NO GLOW, THIN & CRISP)
     final pitchPaint = Paint()
       ..color = Colors.cyanAccent
-      ..strokeWidth = 4
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
 
     final dx = size.width / (maxPoints - 1);
 
@@ -224,18 +221,8 @@ class PitchPainter extends CustomPainter {
 String hzToNote(double hz) {
   const a4 = 440.0;
   const notes = [
-    'C',
-    'C#',
-    'D',
-    'D#',
-    'E',
-    'F',
-    'F#',
-    'G',
-    'G#',
-    'A',
-    'A#',
-    'B'
+    'C', 'C#', 'D', 'D#', 'E', 'F',
+    'F#', 'G', 'G#', 'A', 'A#', 'B'
   ];
 
   final noteNumber = (12 * (log(hz / a4) / ln2)).round() + 69;

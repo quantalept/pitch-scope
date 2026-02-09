@@ -13,7 +13,7 @@ class PitchPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 🔴 BACKGROUND — THIS REMOVES WHITE
+    // 🖤 Dark background
     canvas.drawRect(
       Offset.zero & size,
       Paint()..color = const Color(0xFF121212),
@@ -23,26 +23,38 @@ class PitchPainter extends CustomPainter {
 
     final paint = Paint()
       ..color = Colors.redAccent
-      ..strokeWidth = 2
+      ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
 
     final path = Path();
+    bool started = false;
+    double? lastY;
 
     for (int i = 0; i < pitchHistory.length; i++) {
-      // FIX: last point reaches right edge
-      final x = size.width * i / (pitchHistory.length - 1);
+      final x =
+          size.width * i / (pitchHistory.length - 1);
 
       final normalized =
-          (pitchHistory[i] - minMidi) / (maxMidi - minMidi);
+          (pitchHistory[i] - minMidi) /
+          (maxMidi - minMidi);
 
-      final y = size.height * (1 - normalized.clamp(0.0, 1.0));
+      final y =
+          size.height * (1 - normalized.clamp(0.0, 1.0));
 
-      if (i == 0) {
+      // 🚫 Remove micro-jitter (makes it crisp)
+      if (lastY != null && (y - lastY!).abs() < 2) continue;
+
+      if (!started) {
         path.moveTo(x, y);
+        started = true;
       } else {
         path.lineTo(x, y);
       }
+
+      lastY = y;
     }
 
     canvas.drawPath(path, paint);
