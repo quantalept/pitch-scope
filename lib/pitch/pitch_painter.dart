@@ -13,7 +13,6 @@ class PitchPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 🖤 Dark background
     canvas.drawRect(
       Offset.zero & size,
       Paint()..color = const Color(0xFF121212),
@@ -44,7 +43,6 @@ class PitchPainter extends CustomPainter {
       final y =
           size.height * (1 - normalized.clamp(0.0, 1.0));
 
-      // 🚫 Remove micro-jitter (makes it crisp)
       if (lastY != null && (y - lastY!).abs() < 2) continue;
 
       if (!started) {

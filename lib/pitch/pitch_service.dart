@@ -18,7 +18,6 @@ class PitchService {
         }
       },
       onError: (e) {
-        // ignore noisy frames
       },
     );
   }
