@@ -27,21 +27,20 @@ class PitchScreen extends StatefulWidget {
 
 class _PitchScreenState extends State<PitchScreen>
     with SingleTickerProviderStateMixin {
-
   static const MethodChannel _channel =
       MethodChannel('live_audio_stream');
 
   bool isRunning = false;
   double pitchHz = 0;
-
   int? lockedCenterMidi;
-  final List<double?> pitchHistory = [];
 
+  final List<double?> pitchHistory = [];
   late final AnimationController _controller;
 
-  // 🔹 SMOOTHING (fixes "too fast" feeling)
-  double smoothPitch(double previous, double current) {
-    return previous == 0 ? current : previous * 0.85 + current * 0.15;
+  double smoothPitch(double previous, double current, double alpha) {
+    return previous == 0
+        ? current
+        : previous + alpha * (current - previous);
   }
 
   @override
@@ -57,9 +56,8 @@ class _PitchScreenState extends State<PitchScreen>
       if (!isRunning) return;
 
       if (call.method == 'pitch') {
-        final double hz = (call.arguments as num).toDouble();
+        final hz = (call.arguments as num).toDouble();
 
-        // 🔇 SILENCE / NOISE FILTER
         if (hz < 60 || hz > 3000) {
           setState(() {
             pitchHz = 0;
@@ -71,23 +69,30 @@ class _PitchScreenState extends State<PitchScreen>
           return;
         }
 
-        final int midi = hzToMidi(hz);
+        final midi = hzToMidi(hz);
+
+        if (lockedCenterMidi != null) {
+          if ((midi - lockedCenterMidi!).abs() > 5) {
+            return;
+          }
+        }
 
         if (lockedCenterMidi == null ||
-            (midi - lockedCenterMidi!).abs() >= 1) {
+            (midi - lockedCenterMidi!).abs() >= 2) {
           lockedCenterMidi = midi;
         }
 
-        final double last =
-            pitchHistory.isNotEmpty && pitchHistory.last != null
-                ? pitchHistory.last!
-                : hz;
-
-        final double smoothedHz = smoothPitch(last, hz);
-
         setState(() {
+          double last =
+              pitchHistory.isNotEmpty && pitchHistory.last != null
+                  ? pitchHistory.last!
+                  : hz;
+
+          final smoothedHz = smoothPitch(last, hz, 0.15);
+
           pitchHz = smoothedHz;
           pitchHistory.add(smoothedHz);
+
           if (pitchHistory.length > 220) {
             pitchHistory.removeAt(0);
           }
@@ -154,6 +159,7 @@ class _PitchScreenState extends State<PitchScreen>
                       style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 18,
+                        letterSpacing: 1.2,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -163,6 +169,7 @@ class _PitchScreenState extends State<PitchScreen>
                         fontSize: 88,
                         fontWeight: FontWeight.w300,
                         color: Colors.white,
+                        letterSpacing: -2,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -191,12 +198,17 @@ class _PitchScreenState extends State<PitchScreen>
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: CustomPaint(
-                    painter: PitchPainterCrisp(
-                      centerMidi: lockedCenterMidi,
-                      pitchHistory: pitchHistory,
-                    ),
-                    size: Size.infinite,
+                  child: AnimatedBuilder(
+                    animation: _controller,
+                    builder: (context, child) {
+                      return CustomPaint(
+                        painter: PitchPainterCrisp(
+                          centerMidi: lockedCenterMidi,
+                          pitchHistory: pitchHistory,
+                        ),
+                        size: Size.infinite,
+                      );
+                    },
                   ),
                 ),
               ),
@@ -221,10 +233,10 @@ class PitchPainterCrisp extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (centerMidi == null) return;
+    if (centerMidi == null || pitchHistory.isEmpty) return;
 
     const visibleRows = 7;
-    final leftPadding = 18.0;
+    final leftPadding = 16.0;
     final rowHeight = size.height / visibleRows;
     final centerRow = visibleRows ~/ 2;
 
@@ -275,12 +287,14 @@ class PitchPainterCrisp extends CustomPainter {
         continue;
       }
 
-      final x = leftPadding +
-          (size.width - leftPadding) *
-              i /
-              max(1, pitchHistory.length - 1);
+      final denominator =
+          pitchHistory.length <= 1 ? 1 : pitchHistory.length - 1;
 
-      final midi = (69 + 12 * log(pitch / 440) / ln2).round();
+      final x = leftPadding +
+          (size.width - leftPadding) * i / denominator;
+
+      final midi = 69 + 12 * log(pitch / 440) / ln2;
+
       final rowOffset = centerRow - (midi - centerMidi!);
 
       if (rowOffset < 0 || rowOffset >= visibleRows) continue;

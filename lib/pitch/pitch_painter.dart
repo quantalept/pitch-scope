@@ -21,7 +21,7 @@ class PitchPainter extends CustomPainter {
     if (pitchHistory.length < 2) return;
 
     final paint = Paint()
-      ..color = Colors.redAccent
+      ..color = Colors.cyanAccent   
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
@@ -29,21 +29,28 @@ class PitchPainter extends CustomPainter {
       ..isAntiAlias = true;
 
     final path = Path();
+
     bool started = false;
     double? lastY;
 
     for (int i = 0; i < pitchHistory.length; i++) {
-      final x =
-          size.width * i / (pitchHistory.length - 1);
+      final midi = pitchHistory[i];
+
+      if (midi <= 0) {
+        started = false;
+        lastY = null;
+        continue;
+      }
+
+      final x = size.width * i / (pitchHistory.length - 1);
 
       final normalized =
-          (pitchHistory[i] - minMidi) /
-          (maxMidi - minMidi);
+          (midi - minMidi) / (maxMidi - minMidi);
 
       final y =
           size.height * (1 - normalized.clamp(0.0, 1.0));
 
-      if (lastY != null && (y - lastY!).abs() < 2) continue;
+      if (lastY != null && (y - lastY!).abs() < 1.5) continue;
 
       if (!started) {
         path.moveTo(x, y);
@@ -60,6 +67,8 @@ class PitchPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant PitchPainter oldDelegate) {
-    return oldDelegate.pitchHistory != pitchHistory;
+    return oldDelegate.pitchHistory != pitchHistory ||
+        oldDelegate.minMidi != minMidi ||
+        oldDelegate.maxMidi != maxMidi;
   }
 }

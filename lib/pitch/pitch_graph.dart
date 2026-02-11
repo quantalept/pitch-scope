@@ -37,7 +37,7 @@ class _PitchScreenState extends State<PitchScreen> {
   void initState() {
     super.initState();
 
-    // 🔧 Fake pitch stream for demo (replace with mic input)
+    // 🔧 Fake pitch stream (replace with mic later)
     double hz = 300;
     Timer.periodic(const Duration(milliseconds: 40), (_) {
       hz += (Random().nextDouble() - 0.5) * 10;
@@ -68,7 +68,6 @@ class _PitchScreenState extends State<PitchScreen> {
               maxHz: 1000,
             ),
           ),
-
           Positioned(
             top: 40,
             left: 0,
@@ -88,7 +87,7 @@ class _PitchScreenState extends State<PitchScreen> {
                   '${currentHz.toStringAsFixed(1)} Hz',
                   style: TextStyle(
                     fontSize: 16,
-                    color: Colors.white.withOpacity(0.7),
+                    color: Colors.white70,
                   ),
                 ),
               ],
@@ -123,14 +122,38 @@ class PitchGraph extends StatefulWidget {
 
 class _PitchGraphState extends State<PitchGraph> {
   static const int maxPoints = 200;
+
   final List<double> _pitches = [];
+
+  double _lastPitch = 0;
+  double _smoothedPitch = 0;
+
+  final double _smoothingFactor = 0.12; // 🎯 Vocal Monitor smoothness
+  DateTime _lastUpdate = DateTime.now();
 
   @override
   void initState() {
     super.initState();
+
     widget.pitchStream.listen((hz) {
+      if (hz <= 0) return; // ignore silence
+
+      // ✅ Remove duplicates / tiny jitter
+      if ((hz - _lastPitch).abs() < 1) return;
+      _lastPitch = hz;
+
+      // ✅ Exponential smoothing
+      _smoothedPitch =
+          _smoothedPitch + _smoothingFactor * (hz - _smoothedPitch);
+
+      // ✅ Slow horizontal movement (40ms)
+      if (DateTime.now().difference(_lastUpdate).inMilliseconds < 40) {
+        return;
+      }
+      _lastUpdate = DateTime.now();
+
       setState(() {
-        _pitches.add(hz);
+        _pitches.add(_smoothedPitch);
         if (_pitches.length > maxPoints) {
           _pitches.removeAt(0);
         }
@@ -171,13 +194,13 @@ class PitchPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // BACKGROUND
+    // Background
     canvas.drawRect(
       Offset.zero & size,
       Paint()..color = const Color(0xFF121212),
     );
 
-    // GRID LINES
+    // Grid lines
     final gridPaint = Paint()
       ..color = Colors.white.withOpacity(0.15)
       ..strokeWidth = 1;
@@ -189,7 +212,6 @@ class PitchPainter extends CustomPainter {
 
     if (pitches.length < 2) return;
 
-    // ✅ ONLY CHANGE IS HERE (NO GLOW, THIN & CRISP)
     final pitchPaint = Paint()
       ..color = Colors.cyanAccent
       ..strokeWidth = 1.5
@@ -198,8 +220,6 @@ class PitchPainter extends CustomPainter {
     final dx = size.width / (maxPoints - 1);
 
     for (int i = 1; i < pitches.length; i++) {
-      if (pitches[i] <= 0 || pitches[i - 1] <= 0) continue;
-
       canvas.drawLine(
         Offset(
           (i - 1) * dx,
