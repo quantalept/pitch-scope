@@ -12,7 +12,6 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "live_audio_stream"
-
     private lateinit var channel: MethodChannel
     private lateinit var audioEngine: AudioEngine
 
@@ -25,8 +24,6 @@ class MainActivity : FlutterActivity() {
         )
 
         audioEngine = AudioEngine { pitch ->
-
-            // 🔥 MUST run on main thread
             runOnUiThread {
                 channel.invokeMethod("pitch", pitch)
             }

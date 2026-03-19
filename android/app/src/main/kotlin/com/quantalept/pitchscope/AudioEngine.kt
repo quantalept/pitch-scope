@@ -12,8 +12,8 @@ class AudioEngine(
     private var isRecording = false
     private var audioRecord: AudioRecord? = null
 
-    private val sampleRate = 44100
-    private val bufferSize = 2048
+    private val sampleRate = 22050   // reduced for stability
+    private val bufferSize = 1024    // smaller buffer = less CPU
 
     fun start() {
         if (isRecording) return
@@ -49,34 +49,13 @@ class AudioEngine(
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                 if (read <= 0) continue
 
-                // -------------------------
-                // 1️⃣ RMS VOLUME GATING
-                // -------------------------
-                var sum = 0.0
-                for (i in 0 until read) {
-                    sum += buffer[i] * buffer[i]
-                }
+                val pitch = detectPitch(buffer, read)
 
-                val rms = sqrt(sum / read)
-                val level = rms / 32768.0
-
-                // Ignore very quiet sounds (hiss, room noise)
-                if (level < 0.05) {
+                if (pitch in 60.0..1200.0) {
+                    onPitch(pitch)
+                } else {
                     onPitch(0.0)
-                    continue
                 }
-
-                // -------------------------
-                // 2️⃣ PITCH DETECTION
-                // -------------------------
-                val pitch = estimatePitch(buffer, read)
-
-                // Reject unrealistic human frequencies
-                if (pitch !in 60.0..1200.0) {
-                    continue
-                }
-
-                onPitch(pitch)
             }
 
         }.start()
@@ -89,22 +68,33 @@ class AudioEngine(
         audioRecord = null
     }
 
-    // ---------------------------------
-    // Auto-correlation Pitch Detection
-    // ---------------------------------
-    private fun estimatePitch(
-        buffer: ShortArray,
-        size: Int
-    ): Double {
+    private fun detectPitch(buffer: ShortArray, size: Int): Double {
+
+        // RMS noise gate (light)
+        var sum = 0.0
+        for (i in 0 until size) {
+            sum += buffer[i] * buffer[i]
+        }
+        val rms = sqrt(sum / size)
+        val level = rms / 32768.0
+
+        if (level < 0.01) return 0.0
+
+        val minFreq = 80.0
+        val maxFreq = 1000.0
+
+        val minLag = (sampleRate / maxFreq).toInt()
+        val maxLag = (sampleRate / minFreq).toInt()
 
         var bestLag = 0
         var maxCorr = 0.0
 
-        for (lag in 40..1000) {
+        for (lag in minLag..maxLag) {
 
             var corr = 0.0
 
-            for (i in 0 until size - lag) {
+            // step 2 reduces CPU usage
+            for (i in 0 until size - lag step 2) {
                 corr += buffer[i] * buffer[i + lag]
             }
 
@@ -114,12 +104,8 @@ class AudioEngine(
             }
         }
 
-        // Reject weak correlation (random noise)
-        if (maxCorr < 1e9) return 0.0
+        if (bestLag == 0) return 0.0
 
-        return if (bestLag > 0)
-            sampleRate.toDouble() / bestLag
-        else
-            0.0
+        return sampleRate.toDouble() / bestLag
     }
 }

@@ -1,4 +1,4 @@
-package com.example.pitchscope
+package com.quantalept.pitchscope
 
 import android.media.*
 import android.os.Process
