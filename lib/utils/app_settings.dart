@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 
 class AppSettings {
 
-  // Selected Major note (C,D,E,F,G,A,B)
-  static ValueNotifier<String> major = ValueNotifier<String>('C');
+  /// Selected Scale (used across app)
+  /// Default must match dropdown values
+  static final ValueNotifier<String> major =
+      ValueNotifier<String>("C Major");
 
-  // Pitch smoothing sensitivity
-  static ValueNotifier<double> sensitivity = ValueNotifier<double>(0.18);
+  /// Pitch smoothing sensitivity
+  static final ValueNotifier<double> sensitivity =
+      ValueNotifier<double>(0.18);
 
 }

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
-
+import 'package:pitchscope/utils/app_settings.dart';
 import '../widgets/settings_screen.dart';
 import '../pitch/raga_comparision_painter.dart';
 
@@ -285,15 +285,20 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
 
             /// PRACTICE GRAPH
             Expanded(
-              child: CustomPaint(
-                painter: RagaComparisonPainter(
-                  pitchHistory: pitchHistory,
-                  ragaPattern: ragaPattern,
-                  timeIndex: timeIndex,
-                  minMidi: minMidi,
-                  maxMidi: maxMidi,
-                ),
-                size: Size.infinite,
+              child: ValueListenableBuilder<String>(
+                valueListenable: AppSettings.major,
+                builder: (context, _, __) {
+                  return CustomPaint(
+                   painter: RagaComparisonPainter(
+                      pitchHistory: pitchHistory,
+                      timeIndex: timeIndex,
+                      minMidi: minMidi,
+                      maxMidi: maxMidi,
+                      raagaName: widget.raagaName,
+                    ),
+                    size: Size.infinite,
+                  );
+                },
               ),
             ),
 

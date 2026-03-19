@@ -227,13 +227,15 @@ class _PitchScreenState extends State<PitchScreen> {
                 valueListenable: AppSettings.major,
                 builder: (context, major, child) {
 
+                  final root = major.split(" ").first; // ✅ extract "C" from "C Major"
+
                   return Stack(
                     children: [
 
                       CustomPaint(
                         painter: NaturalScalePainter(
                           scrollOffset: _scrollOffset,
-                          rootNote: major,
+                          rootNote: root,
                         ),
                         size: Size.infinite,
                       ),

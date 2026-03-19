@@ -4,20 +4,83 @@ import '../utils/app_settings.dart';
 class RagaComparisonPainter extends CustomPainter {
 
   final List<double> pitchHistory;
-  final List<double> ragaPattern;
   final int minMidi;
   final int maxMidi;
   final int timeIndex;
+  final String raagaName;
 
   RagaComparisonPainter({
     required this.pitchHistory,
-    required this.ragaPattern,
     required this.minMidi,
     required this.maxMidi,
     required this.timeIndex,
+    required this.raagaName,
   });
 
   final double tolerance = 0.5;
+
+  /// 🎼 BUILD REAL RAGA PATTERN
+  List<double> buildRagaPattern(int baseMidi) {
+
+    switch (raagaName) {
+
+      case "Bhairavi":
+        return [
+          0,1,3,5,7,8,10,12,
+          8,10,12,1,3,
+          5,1,3,
+          1,0,
+          12,10,8,7,5,3,1,0,
+        ].map((i) => baseMidi + i.toDouble()).toList();
+
+      case "Kalyani":
+        return [
+          0,2,4,6,7,9,11,12,
+          4,6,7,9,
+          6,4,2,
+          12,11,9,7,6,4,2,0,
+        ].map((i) => baseMidi + i.toDouble()).toList();
+
+      case "Todi":
+        return [
+          0,1,3,6,7,8,10,12,
+          1,3,1,0,
+          8,10,12,1,3,
+          6,3,1,
+          12,10,8,7,6,3,1,0,
+        ].map((i) => baseMidi + i.toDouble()).toList();
+
+      case "Mayamalavagowla":
+        return [
+          0,1,4,5,7,8,11,12,
+          11,8,7,5,4,1,0,
+        ].map((i) => baseMidi + i.toDouble()).toList();
+
+      case "Shankarabharanam":
+        return [
+          0,2,4,5,7,9,11,12,
+          12,11,9,7,5,4,2,0,
+        ].map((i) => baseMidi + i.toDouble()).toList();
+
+      case "Mohanam":
+        return [
+          0,2,4,7,9,12,
+          9,7,4,2,0,
+        ].map((i) => baseMidi + i.toDouble()).toList();
+
+      case "Kamboji":
+        return [
+          0,2,4,5,7,9,12,
+          10,9,7,5,4,2,0,
+          11,9,7,
+        ].map((i) => baseMidi + i.toDouble()).toList();
+
+      default:
+        return [
+          0,2,4,5,7,9,11,12,
+        ].map((i) => baseMidi + i.toDouble()).toList();
+    }
+  }
 
   static const List<String> naturalNotes = [
     'C','D','E','F','G','A','B'
@@ -56,6 +119,22 @@ class RagaComparisonPainter extends CustomPainter {
     final rootNote = selectedScale.split(" ").first;
     final chromaticMode = selectedScale == "Chromatic";
 
+    /// 🎯 ROOT → MIDI
+    const chromatic = [
+      'C','C#','D','D#','E','F',
+      'F#','G','G#','A','A#','B'
+    ];
+
+    int rootIndex = chromatic.indexWhere((n) =>
+        n == rootNote.replaceAll('♯', '#').replaceAll('♭', 'b'));
+
+    if (rootIndex == -1) rootIndex = 0;
+
+    final baseMidi = 60 + rootIndex;
+
+    final ragaPattern = buildRagaPattern(baseMidi);
+
+    /// BACKGROUND
     canvas.drawRect(
       Offset.zero & size,
       Paint()..color = const Color(0xFF121212),
@@ -82,7 +161,7 @@ class RagaComparisonPainter extends CustomPainter {
 
     double y = size.height;
 
-    /// SCALE LINES
+    /// SCALE LINES (UNCHANGED)
     for (int midi = maxMidi; midi >= minMidi; midi--) {
 
       if (!isNatural(midi)) continue;
@@ -118,7 +197,7 @@ class RagaComparisonPainter extends CustomPainter {
 
     const double stepX = 6;
 
-    /// ✅ RAGA GUIDE (SCROLLING WITH USER PITCH)
+    /// 🎼 REAL RAGA (SMOOTH)
     if (ragaPattern.isNotEmpty && pitchHistory.length > 1) {
 
       final ragaPaint = Paint()
@@ -127,21 +206,32 @@ class RagaComparisonPainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
 
       final ragaPath = Path();
+      int len = pitchHistory.length;
 
-      int historyLen = pitchHistory.length;
+      for (int i = 0; i < len; i++) {
 
-      for (int i = 0; i < historyLen; i++) {
+        double progress = i / (len - 1);
 
-        double progress = i / (historyLen - 1);
+        double scaledIndex =
+            progress * (ragaPattern.length - 1);
 
-        int ragaIndex =
-            (progress * (ragaPattern.length - 1)).round();
+        int lower = scaledIndex.floor();
+        int upper = scaledIndex.ceil();
 
-        double midi = ragaPattern[ragaIndex];
+        if (upper >= ragaPattern.length) {
+          upper = ragaPattern.length - 1;
+        }
 
-        double x =
-            size.width - (historyLen - i) * stepX;
+        double t = scaledIndex - lower;
 
+        /// 🎵 smooth curve (gamaka feel)
+        double smoothT = t * t * (3 - 2 * t);
+
+        double midi =
+            ragaPattern[lower] +
+            (ragaPattern[upper] - ragaPattern[lower]) * smoothT;
+
+        double x = size.width - (len - i) * stepX;
         double y = midiToY(midi, size);
 
         if (i == 0) {
@@ -154,7 +244,7 @@ class RagaComparisonPainter extends CustomPainter {
       canvas.drawPath(ragaPath, ragaPaint);
     }
 
-    /// ✅ USER PITCH (SCROLLING)
+    /// USER PITCH (UNCHANGED)
     if (pitchHistory.length < 2) return;
 
     double? prevX;
@@ -165,9 +255,7 @@ class RagaComparisonPainter extends CustomPainter {
       double midi = pitchHistory[i];
       if (midi <= 0) continue;
 
-      double x =
-          size.width - (pitchHistory.length - i) * stepX;
-
+      double x = size.width - (pitchHistory.length - i) * stepX;
       double y = midiToY(midi, size);
 
       if (prevX != null) {
@@ -175,11 +263,10 @@ class RagaComparisonPainter extends CustomPainter {
         double progress =
             i / (pitchHistory.length - 1);
 
-        int ragaIndex =
+        int idx =
             (progress * (ragaPattern.length - 1)).round();
 
-        double target = ragaPattern[ragaIndex];
-
+        double target = ragaPattern[idx];
         double diff = midi - target;
 
         Color color;
@@ -192,7 +279,7 @@ class RagaComparisonPainter extends CustomPainter {
           color = Colors.yellow;
         }
 
-        final pitchPaint = Paint()
+        final paint = Paint()
           ..color = color
           ..strokeWidth = 4
           ..strokeCap = StrokeCap.round
@@ -201,7 +288,7 @@ class RagaComparisonPainter extends CustomPainter {
         canvas.drawLine(
           Offset(prevX!, prevY!),
           Offset(x, y),
-          pitchPaint,
+          paint,
         );
       }
 
