@@ -12,9 +12,24 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
+
+  # 🔐 Permissions
   permission_handler: ^12.0.1
+
+  # 📁 File access
   path_provider: ^2.1.3
-  record: ^6.2.0   # ✅ FIXED (important)
+
+  # 🎤 Mic pitch detection
+  record: ^6.2.0
+
+  # 🎵 Device songs
+  on_audio_query: ^2.9.0
+
+  # 🎵 Play song
+  just_audio: ^0.9.36
+
+  # 🎧 Audio session
+  audio_session: ^0.1.16
 
 dev_dependencies:
   flutter_test:
@@ -23,3 +38,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/songs/Bhairavi_ragam.mp3
+
+# ✅ ADD THIS
+dependency_overrides:
+  on_audio_query_android:
+    path: local_plugins/on_audio_query_android

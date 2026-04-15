@@ -1,0 +1,36 @@
+import librosa
+import numpy as np
+import json
+
+# Load MP3
+y, sr = librosa.load("Bhairavi_ragam.mp3", sr=22050)
+
+# Extract pitch using YIN
+f0 = librosa.yin(
+    y,
+    fmin=80,
+    fmax=1000,
+)
+
+# Replace NaN with 0
+f0 = np.nan_to_num(f0)
+
+# 🔥 IMPORTANT: create timestamps
+hop_length = 256
+timestamps = librosa.frames_to_time(
+    np.arange(len(f0)),
+    sr=sr,
+    hop_length=hop_length
+)
+
+# ✅ CORRECT JSON FORMAT
+data = {
+    "timestamps": timestamps.tolist(),
+    "pitch": f0.tolist()
+}
+
+# ✅ SAVE to correct Flutter asset path
+with open("assets/pitch/bhairavi_pitch.json", "w") as f:
+    json.dump(data, f)
+
+print("✅ Correct pitch JSON saved!")

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'pitch_screen.dart';
-import 'match_the_raagas.dart'; // 👈 ADDED
+import 'match_the_raagas.dart';
+import 'device_song_screen.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -13,7 +14,7 @@ class HomePage extends StatelessWidget {
         child: Column(
           children: [
 
-            // ================= HEADER =================
+            /// HEADER
             Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: 16,
@@ -37,7 +38,7 @@ class HomePage extends StatelessWidget {
 
             const SizedBox(height: 30),
 
-            // ================= WAVE CARD =================
+            /// WAVE CARD
             Container(
               height: 220,
               margin: const EdgeInsets.symmetric(horizontal: 24),
@@ -56,7 +57,7 @@ class HomePage extends StatelessWidget {
 
             const SizedBox(height: 40),
 
-            // ================= MONITOR OWN VOICE =================
+            /// MONITOR
             _buildMainButton(
               context,
               title: "🎤 Monitor own voice",
@@ -72,7 +73,7 @@ class HomePage extends StatelessWidget {
 
             const SizedBox(height: 20),
 
-            // ================= MATCH THE RAAGAS =================
+            /// MATCH RAAGAS
             _buildMainButton(
               context,
               title: "🎵 Match The Raagas",
@@ -88,21 +89,26 @@ class HomePage extends StatelessWidget {
 
             const SizedBox(height: 20),
 
-            // ================= USE YOUR OWN SONG =================
+            /// ✅ ADDED ONLY THIS (NO OTHER CHANGES)
             _buildMainButton(
               context,
               title: "🎶 Use your own song",
-              onPressed: () {},
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>  DeviceSongsScreen(),
+                  ),
+                );
+              },
             ),
 
             const Spacer(),
 
-            // ================= FOOTER =================
+            /// FOOTER
             Container(
               height: 60,
-              decoration: const BoxDecoration(
-                color: Color(0xFF2B003D),
-              ),
+              color: const Color(0xFF2B003D),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: const [
@@ -118,7 +124,6 @@ class HomePage extends StatelessWidget {
     );
   }
 
-  // ================= BUTTON BUILDER =================
   Widget _buildMainButton(
     BuildContext context, {
     required String title,
@@ -145,7 +150,6 @@ class HomePage extends StatelessWidget {
   }
 }
 
-// ================= FOOTER ITEM WIDGET =================
 class _FooterItem extends StatelessWidget {
   final IconData icon;
   final String label;
