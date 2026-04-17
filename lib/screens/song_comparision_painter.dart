@@ -37,7 +37,9 @@ class RagaComparisonPainter extends CustomPainter {
   int octave(int midi) => (midi ~/ 12) - 1;
 
   bool isNatural(int midi) {
-    String note = noteName(midi).replaceAll('♭', '').replaceAll('#', '');
+    String note = noteName(midi)
+        .replaceAll('♭', '')
+        .replaceAll('#', '');
     return naturalNotes.contains(note);
   }
 
@@ -54,7 +56,6 @@ class RagaComparisonPainter extends CustomPainter {
     return size.height * (1 - normalized.clamp(0.0, 1.0));
   }
 
-  /// 🔥 FIX: stable time mapping (NO logic change, only alignment fix)
   double _xFromIndex(int i, int total, Size size) {
     if (total <= 1) return 0;
     return (i / (total - 1)) * size.width;
@@ -95,7 +96,7 @@ class RagaComparisonPainter extends CustomPainter {
 
     double y = size.height;
 
-    /// 🎼 LEFT SCALE (UNCHANGED - DO NOT TOUCH)
+    /// 🎼 LEFT SCALE (UNCHANGED)
     for (int midi = 84; midi >= 36; midi--) {
       if (!isNatural(midi)) continue;
 
@@ -124,7 +125,7 @@ class RagaComparisonPainter extends CustomPainter {
       tp.paint(canvas, Offset(20, y - tp.height / 2));
     }
 
-    /// 🔥 WINDOW (UNCHANGED LOGIC)
+    /// 🔥 WINDOW
     const int windowSize = 150;
 
     final ref = referencePitch.length > windowSize
@@ -137,18 +138,20 @@ class RagaComparisonPainter extends CustomPainter {
 
     if (ref.length < 2 || user.length < 2) return;
 
-    final validRef = ref.where((e) => e > 0).toList();
-    if (validRef.isEmpty) return;
+    /// 🔥 RANGE AUTO FIT
+    final combined = [...ref, ...user].where((e) => e > 0).toList();
+    if (combined.isEmpty) return;
 
-    double minMidi = validRef.map(hzToMidi).reduce(min);
-    double maxMidi = validRef.map(hzToMidi).reduce(max);
+    double minMidi = combined.map(hzToMidi).reduce(min);
+    double maxMidi = combined.map(hzToMidi).reduce(max);
 
-    if ((maxMidi - minMidi).abs() < 1) {
-      maxMidi += 2;
-      minMidi -= 2;
+    if ((maxMidi - minMidi).abs() < 6) {
+      double center = (maxMidi + minMidi) / 2;
+      minMidi = center - 3;
+      maxMidi = center + 3;
     }
 
-    /// 🟣 MP3 LINE (FIXED ALIGNMENT ONLY)
+    /// 🟣 REFERENCE (SONG) LINE — FIXED
     final refPaint = Paint()
       ..color = Colors.purpleAccent
       ..strokeWidth = 3
@@ -158,37 +161,46 @@ class RagaComparisonPainter extends CustomPainter {
 
     for (int i = 0; i < ref.length; i++) {
       double hz = ref[i];
-      if (hz <= 0) continue;
+
+      /// ✅ RELAXED FILTER (IMPORTANT FIX)
+      if (hz <= 0 || hz > 2000) {
+        prevX = null;
+        prevY = null;
+        continue;
+      }
 
       double midi = hzToMidi(hz);
 
       double x = _xFromIndex(i, ref.length, size);
-      double y = midiToY(midi, minMidi, maxMidi, size);
+      double yPos = midiToY(midi, minMidi, maxMidi, size);
 
       if (prevX != null && prevY != null) {
         canvas.drawLine(
-          Offset(prevX, prevY),
-          Offset(x, y),
-          refPaint,
-        );
+            Offset(prevX, prevY), Offset(x, yPos), refPaint);
       }
 
       prevX = x;
-      prevY = y;
+      prevY = yPos;
     }
 
-    /// 🎤 USER LINE (FIXED ALIGNMENT ONLY)
+    /// 🎤 USER LINE
     prevX = null;
     prevY = null;
 
     for (int i = 0; i < user.length; i++) {
       double hz = user[i];
-      if (hz <= 0) continue;
+
+      /// ✅ SAME RELAXED FILTER
+      if (hz <= 0 || hz > 2000) {
+        prevX = null;
+        prevY = null;
+        continue;
+      }
 
       double midi = hzToMidi(hz);
 
       double x = _xFromIndex(i, user.length, size);
-      double y = midiToY(midi, minMidi, maxMidi, size);
+      double yPos = midiToY(midi, minMidi, maxMidi, size);
 
       double refMidi = (i < ref.length && ref[i] > 0)
           ? hzToMidi(ref[i])
@@ -212,14 +224,11 @@ class RagaComparisonPainter extends CustomPainter {
 
       if (prevX != null && prevY != null) {
         canvas.drawLine(
-          Offset(prevX, prevY),
-          Offset(x, y),
-          paint,
-        );
+            Offset(prevX, prevY), Offset(x, yPos), paint);
       }
 
       prevX = x;
-      prevY = y;
+      prevY = yPos;
     }
   }
 

@@ -8,15 +8,22 @@ import '../widgets/settings_screen.dart';
 
 class SongPracticeScreen extends StatefulWidget {
   final SongModel song;
+  final String lyrics;
 
-  const SongPracticeScreen({super.key, required this.song});
+  const SongPracticeScreen({
+    super.key,
+    required this.song,
+    required this.lyrics,
+  });
 
   @override
-  State<SongPracticeScreen> createState() => _SongPracticeScreenState();
+  State<SongPracticeScreen> createState() =>
+      _SongPracticeScreenState();
 }
 
 class _SongPracticeScreenState extends State<SongPracticeScreen> {
-  static const MethodChannel _channel = MethodChannel('live_audio_stream');
+  static const MethodChannel _channel =
+      MethodChannel('live_audio_stream');
 
   bool isListening = false;
   bool isPaused = false;
@@ -24,19 +31,85 @@ class _SongPracticeScreenState extends State<SongPracticeScreen> {
   String currentNote = "";
 
   List<double> userPitch = List.generate(150, (_) => 0.0);
-  List<double> visibleSongPitch = List.generate(150, (_) => 0.0);
+  List<double> visibleSongPitch =
+      List.generate(150, (_) => 0.0);
 
   List<double> fullSongPitch = [];
 
   double _latestMicPitch = 0;
 
-  List<double> _pitchBuffer = [];
-  double _lastStablePitch = 0;
-
   Timer? _timer;
-  int _songIndex = 0;
+
+  int _songStartTime = 0;
+  double _pitchFrameMs = 50;
 
   static const int frameMs = 50;
+
+  // =======================
+  // 🎵 LYRICS MODAL
+  // =======================
+  void _showLyrics() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A0026),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (_) {
+        final isEmpty =
+            widget.lyrics.trim().isEmpty ||
+            widget.lyrics.contains("No lyrics");
+
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.6,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          builder: (_, controller) {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: SingleChildScrollView(
+                controller: controller,
+                child: Text(
+                  isEmpty
+                      ? "No lyrics available for this song"
+                      : widget.lyrics,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  double smoothPitch(double current, double previous) {
+    if (current.isNaN || current.isInfinite || current <= 0) {
+      return previous;
+    }
+
+    if (current < 40 || current > 2000) {
+      return previous;
+    }
+
+    if (previous != 0) {
+      double diff = (current - previous).abs();
+      if (diff > 300) {
+        return previous;
+      }
+    }
+
+    const alpha = 0.25;
+    return previous == 0
+        ? current
+        : (alpha * current + (1 - alpha) * previous);
+  }
 
   @override
   void initState() {
@@ -50,58 +123,57 @@ class _SongPracticeScreenState extends State<SongPracticeScreen> {
 
         final hz = (call.arguments as num).toDouble();
 
-        if (hz < 60 || hz > 2000) return;
+        if (hz < 40 || hz > 2000) return;
 
         _latestMicPitch = hz;
       }
     });
 
-    _timer = Timer.periodic(const Duration(milliseconds: frameMs), (_) {
-      if (!mounted || !isListening || isPaused) return;
+    _timer = Timer.periodic(
+      const Duration(milliseconds: frameMs),
+      (_) {
+        if (!mounted || !isListening || isPaused) return;
 
-      double songHz = 0;
+        double songHz = 0;
 
-      if (_songIndex < fullSongPitch.length) {
-        songHz = fullSongPitch[_songIndex];
-        _songIndex++;
-      }
+        if (_songStartTime != 0 && fullSongPitch.isNotEmpty) {
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final elapsedMs = now - _songStartTime;
 
-      double hz = _latestMicPitch;
+          int index = (elapsedMs / _pitchFrameMs).floor();
 
-      if (hz > 60 && hz < 2000) {
-        _pitchBuffer.add(hz);
-        if (_pitchBuffer.length > 5) _pitchBuffer.removeAt(0);
-
-        hz = _pitchBuffer.reduce((a, b) => a + b) / _pitchBuffer.length;
-
-        if (_lastStablePitch != 0 &&
-            (hz - _lastStablePitch).abs() > 50) {
-          hz = _lastStablePitch;
+          if (index >= 0 && index < fullSongPitch.length) {
+            songHz = fullSongPitch[index];
+          }
         }
 
-        _lastStablePitch = hz;
-        currentNote = _hzToNote(hz);
-      } else {
-        hz = 0;
-        currentNote = "";
-      }
+        double hz = _latestMicPitch;
 
-      userPitch.removeAt(0);
-      userPitch.add(hz);
+        double previousUser =
+            userPitch.isNotEmpty ? userPitch.last : 0;
 
-      visibleSongPitch.removeAt(0);
-      if (songHz > 60 && songHz < 2000) {
-        visibleSongPitch.add(songHz);
-      } else {
-        visibleSongPitch.add(
-          visibleSongPitch.isNotEmpty
-              ? visibleSongPitch.last
-              : 0,
-        );
-      }
+        hz = smoothPitch(hz, previousUser);
 
-      setState(() {});
-    });
+        currentNote = hz > 0 ? _hzToNote(hz) : "";
+
+        userPitch.removeAt(0);
+        userPitch.add(hz);
+
+        visibleSongPitch.removeAt(0);
+
+        double prevSong =
+            visibleSongPitch.isNotEmpty ? visibleSongPitch.last : 0;
+
+        if (songHz > 40 && songHz < 2000) {
+          songHz = smoothPitch(songHz, prevSong);
+          visibleSongPitch.add(songHz);
+        } else {
+          visibleSongPitch.add(prevSong);
+        }
+
+        setState(() {});
+      },
+    );
   }
 
   Future<void> _extractSongPitch() async {
@@ -112,10 +184,12 @@ class _SongPracticeScreenState extends State<SongPracticeScreen> {
       );
 
       final raw = List<double>.from(result);
+      final smoothed = _smoothPitch(raw);
 
-      fullSongPitch = _smoothPitch(raw);
-
-      _songIndex = 0;
+      setState(() {
+        fullSongPitch = smoothed;
+        _songStartTime = DateTime.now().millisecondsSinceEpoch;
+      });
 
       debugPrint("✅ Song pitch loaded: ${fullSongPitch.length}");
     } catch (e) {
@@ -125,35 +199,34 @@ class _SongPracticeScreenState extends State<SongPracticeScreen> {
 
   List<double> _smoothPitch(List<double> input) {
     List<double> output = [];
+    double lastValid = 0;
 
-    for (int i = 0; i < input.length; i++) {
-      double val = input[i];
-
-      if (val < 80 || val > 1000) {
-        output.add(output.isNotEmpty ? output.last : 0);
+    for (var val in input) {
+      if (val < 40 || val > 2000) {
+        output.add(lastValid);
         continue;
       }
 
-      double prev = i > 0 ? input[i - 1] : val;
-      double next = i < input.length - 1 ? input[i + 1] : val;
-
-      double smooth = (prev + val + next) / 3;
-
-      if (output.isNotEmpty &&
-          (smooth - output.last).abs() > 80) {
-        smooth = output.last;
+      if (lastValid != 0 && (val - lastValid).abs() > 120) {
+        output.add(lastValid);
+        continue;
       }
 
-      output.add(smooth);
+      lastValid = val;
+      output.add(val);
     }
 
     return output;
   }
 
   String _hzToNote(double hz) {
-    const notes = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    const notes = [
+      'C','C#','D','D#','E','F',
+      'F#','G','G#','A','A#','B'
+    ];
 
-    int midi = (69 + 12 * log(hz / 440) / ln2).round();
+    int midi =
+        (69 + 12 * log(hz / 440) / ln2).round();
     int octave = (midi ~/ 12) - 1;
 
     return "${notes[midi % 12]}$octave";
@@ -163,6 +236,8 @@ class _SongPracticeScreenState extends State<SongPracticeScreen> {
     try {
       if (!isListening) {
         await _channel.invokeMethod("startUser");
+        _songStartTime =
+            DateTime.now().millisecondsSinceEpoch;
       } else {
         await _channel.invokeMethod("stopUser");
       }
@@ -183,10 +258,9 @@ class _SongPracticeScreenState extends State<SongPracticeScreen> {
       isPaused = false;
       currentNote = "";
       userPitch = List.generate(150, (_) => 0.0);
-      visibleSongPitch = List.generate(150, (_) => 0.0);
-      _pitchBuffer.clear();
-      _lastStablePitch = 0;
-      _songIndex = 0;
+      visibleSongPitch =
+          List.generate(150, (_) => 0.0);
+      _songStartTime = 0;
     });
   }
 
@@ -197,52 +271,51 @@ class _SongPracticeScreenState extends State<SongPracticeScreen> {
     );
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  /// ✅ FIXED FOOTER
   Widget _footer() {
     return Container(
       height: 85,
       color: const Color(0xFF2B003D),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        mainAxisAlignment:
+            MainAxisAlignment.spaceEvenly,
         children: [
           IconButton(
             icon: Icon(
-              isListening ? Icons.mic : Icons.mic_off,
-              color: isListening ? Colors.greenAccent : Colors.white,
+              isListening
+                  ? Icons.mic
+                  : Icons.mic_off,
+              color: isListening
+                  ? Colors.greenAccent
+                  : Colors.white,
             ),
             onPressed: _toggleMic,
           ),
-
-          /// 🎯 CENTER NOTE
           Text(
-            currentNote.isNotEmpty ? currentNote : "--",
+            currentNote.isNotEmpty
+                ? currentNote
+                : "--",
             style: const TextStyle(
               color: Colors.white,
               fontSize: 26,
               fontWeight: FontWeight.bold,
             ),
           ),
-
           IconButton(
             icon: Icon(
-              isPaused ? Icons.pause_circle : Icons.pause_circle_outline,
+              isPaused
+                  ? Icons.pause_circle
+                  : Icons.pause_circle_outline,
               color: Colors.orange,
             ),
-            onPressed: () => setState(() => isPaused = !isPaused),
+            onPressed: () =>
+                setState(() => isPaused = !isPaused),
           ),
-
           IconButton(
-            icon: const Icon(Icons.stop_circle_outlined,
+            icon: const Icon(
+                Icons.stop_circle_outlined,
                 color: Colors.white),
             onPressed: _stopAll,
           ),
-
           const Icon(Icons.play_arrow,
               color: Colors.lightBlueAccent),
         ],
@@ -254,50 +327,36 @@ class _SongPracticeScreenState extends State<SongPracticeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF1A0026),
-
-      /// 🔥 IMPORTANT FIX (removes overlay issue)
-      resizeToAvoidBottomInset: false,
-
       body: Column(
         children: [
+          /// TOP BAR
           SafeArea(
             bottom: false,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    icon: const Icon(Icons.arrow_back,
+                        color: Colors.white),
                     onPressed: () async {
                       await _stopAll();
                       Navigator.pop(context);
                     },
                   ),
                   Expanded(
-                    child: Column(
-                      children: [
-                        Text(
-                          widget.song.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          widget.song.artist ?? "",
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      widget.song.artist ?? "",
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.settings, color: Colors.white),
+                    icon: const Icon(Icons.settings,
+                        color: Colors.white),
                     onPressed: _openSettings,
                   ),
                 ],
@@ -305,20 +364,74 @@ class _SongPracticeScreenState extends State<SongPracticeScreen> {
             ),
           ),
 
+          /// GRAPH + LYRICS OVERLAY
           Expanded(
-            child: CustomPaint(
-              size: Size.infinite,
-              painter: RagaComparisonPainter(
-                pitchHistory: userPitch,
-                referencePitch: visibleSongPitch,
-                minPitch: 60,
-                maxPitch: 1000,
-                raagaName: "",
-              ),
+            child: Stack(
+              children: [
+                CustomPaint(
+                  size: Size.infinite,
+                  painter: RagaComparisonPainter(
+                    pitchHistory: userPitch,
+                    referencePitch: visibleSongPitch,
+                    minPitch: 60,
+                    maxPitch: 1000,
+                    raagaName: "",
+                  ),
+                ),
+
+                /// 🎯 CENTERED TITLE + ADD LYRICS (LIKE YOUR IMAGE)
+                Positioned(
+                  top: 12,
+                  left: 0,
+                  right: 0,
+                  child: Column(
+                    children: [
+                      Text(
+                        widget.song.title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      GestureDetector(
+                        onTap: _showLyrics,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(8),
+                            border:
+                                Border.all(color: Colors.white24),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.lyrics_outlined,
+                                  color: Colors.white70,
+                                  size: 16),
+                              SizedBox(width: 6),
+                              Text(
+                                "Add Lyrics",
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
 
-          /// ✅ FIXED FOOTER (no overlap ever)
+          /// FOOTER
           SafeArea(
             top: false,
             child: _footer(),

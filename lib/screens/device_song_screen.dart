@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'song_practice_screen.dart';
+import 'lyrics_repository.dart';
 
 class DeviceSongsScreen extends StatefulWidget {
   const DeviceSongsScreen({super.key});
@@ -12,6 +13,7 @@ class DeviceSongsScreen extends StatefulWidget {
 
 class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
   final OnAudioQuery _audioQuery = OnAudioQuery();
+  final LyricsRepository _lyricsRepo = LyricsRepository(); // ✅ ADDED
 
   List<SongModel> songs = [];
   List<SongModel> filteredSongs = [];
@@ -27,7 +29,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
     _loadSongs();
   }
 
-  /// ✅ FIXED LOAD FUNCTION
   Future<void> _loadSongs() async {
     try {
       final status = await Permission.audio.request();
@@ -56,7 +57,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
         filteredSongs = result;
         isLoading = false;
       });
-
     } catch (e) {
       if (!mounted) return;
 
@@ -68,7 +68,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
     }
   }
 
-  /// 🔍 SEARCH
   void _filterSongs(String query) {
     final q = query.toLowerCase();
 
@@ -91,14 +90,24 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
   Widget _songTile(SongModel song) {
     return InkWell(
       borderRadius: BorderRadius.circular(14),
-      onTap: () {
+
+      /// ✅ FIXED ON TAP (LYRICS ADDED)
+      onTap: () async {
+        final lyrics = await _lyricsRepo.getLyrics(song);
+
+        if (!mounted) return;
+
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => SongPracticeScreen(song: song),
+            builder: (_) => SongPracticeScreen(
+              song: song,
+              lyrics: lyrics,
+            ),
           ),
         );
       },
+
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
@@ -108,7 +117,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
         ),
         child: Row(
           children: [
-            /// ICON
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -123,7 +131,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
 
             const SizedBox(width: 14),
 
-            /// TEXT
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -162,7 +169,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
     );
   }
 
-  /// ❌ PERMISSION UI
   Widget _permissionDeniedUI() {
     return const Center(
       child: Text(
@@ -172,7 +178,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
     );
   }
 
-  /// ❌ EMPTY UI
   Widget _emptyUI() {
     return const Center(
       child: Text(
@@ -190,8 +195,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
       body: SafeArea(
         child: Column(
           children: [
-
-            /// HEADER
             Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -215,7 +218,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
               ),
             ),
 
-            /// SEARCH
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Container(
@@ -231,8 +233,7 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
                   decoration: const InputDecoration(
                     hintText: "Search for songs / artists",
                     hintStyle: TextStyle(color: Colors.white54),
-                    prefixIcon:
-                        Icon(Icons.search, color: Colors.white54),
+                    prefixIcon: Icon(Icons.search, color: Colors.white54),
                     border: InputBorder.none,
                   ),
                 ),
@@ -241,7 +242,6 @@ class _DeviceSongsScreenState extends State<DeviceSongsScreen> {
 
             const SizedBox(height: 10),
 
-            /// LIST
             Expanded(
               child: isLoading
                   ? const Center(
