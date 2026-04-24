@@ -8,6 +8,7 @@ class RagaComparisonPainter extends CustomPainter {
   final double minPitch;
   final double maxPitch;
   final String raagaName;
+  final int version;
 
   RagaComparisonPainter({
     required this.pitchHistory,
@@ -15,104 +16,127 @@ class RagaComparisonPainter extends CustomPainter {
     required this.minPitch,
     required this.maxPitch,
     required this.raagaName,
+    required this.version,
   });
 
   final double tolerance = 1.0;
+
+  // Left column width reserved for note labels
+  static const double scaleWidth = 55;
+
+  // Number of semitones visible on screen at once
+  static const double visibleSemitones = 13.0;
 
   double hzToMidi(double hz) {
     if (hz <= 0) return 0;
     return 69 + 12 * log(hz / 440) / ln2;
   }
 
-  static const List<String> naturalNotes = ['C','D','E','F','G','A','B'];
+  static const List<String> _chromatic = [
+    'C', 'C#', 'D', 'Eb', 'E', 'F',
+    'F#', 'G', 'Ab', 'A', 'Bb', 'B'
+  ];
 
-  String noteName(int midi) {
-    const chromatic = [
-      'C','C#','D','E♭','E','F',
-      'F#','G','A♭','A','B♭','B'
-    ];
-    return chromatic[midi % 12];
-  }
-
+  String noteName(int midi) => _chromatic[midi % 12];
   int octave(int midi) => (midi ~/ 12) - 1;
 
-  bool isNatural(int midi) {
-    String note = noteName(midi).replaceAll('♭', '').replaceAll('#', '');
-    return naturalNotes.contains(note);
+  // Y position for a midi note given the current center
+  double midiToY(double midi, double centerMidi, Size size) {
+    final double semitoneHeight = size.height / visibleSemitones;
+    return (size.height / 2) + (centerMidi - midi) * semitoneHeight;
   }
 
-  double midiToY(double midi, double minMidi, double maxMidi, Size size) {
-    double range = maxMidi - minMidi;
-    if (range.abs() < 1) range = 1;
-
-    double normalized = (midi - minMidi) / range;
-
-    if (normalized.isNaN || normalized.isInfinite) {
-      normalized = 0.5;
-    }
-
-    return size.height * (1 - normalized.clamp(0.0, 1.0));
+  double _xFromIndex(int i, int total, Size size) {
+    if (total <= 1) return scaleWidth;
+    return scaleWidth + (i / (total - 1)) * (size.width - scaleWidth);
   }
 
   @override
   void paint(Canvas canvas, Size size) {
     final selectedScale = AppSettings.major.value;
-    final rootNote = selectedScale.split(" ").first;
-
+    final rootNote = selectedScale
+        .split(" ")
+        .first
+        .replaceAll('♯', '#')
+        .replaceAll('♭', 'b')
+        .trim();
     final chromaticMode = selectedScale == "Chromatic";
 
-    /// BACKGROUND
+    // Background
     canvas.drawRect(
       Offset.zero & size,
       Paint()..color = const Color(0xFF121212),
     );
 
-    final normalLine = Paint()
-      ..color = Colors.white24
-      ..strokeWidth = 1;
+    // Determine which pitch to center the scale on
+    double centerMidi = 60.0; // default C4
 
-    final boldLine = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 2;
+    final validRef = referencePitch.where((e) => e > 60 && e < 2000).toList();
+    final validUser = pitchHistory.where((e) => e > 60 && e < 2000).toList();
 
-    const normalText = TextStyle(color: Colors.white70, fontSize: 13);
-    const boldText = TextStyle(
-      color: Colors.white,
-      fontSize: 15,
-      fontWeight: FontWeight.bold,
-    );
+    if (validUser.isNotEmpty) {
+      centerMidi = hzToMidi(validUser.last).roundToDouble();
+    } else if (validRef.isNotEmpty) {
+      centerMidi = hzToMidi(validRef.last).roundToDouble();
+    }
 
-    double y = size.height;
+    // Draw all chromatic notes in the visible window
+    final double semitoneHeight = size.height / visibleSemitones;
+    final int minMidiVisible = (centerMidi - visibleSemitones / 2 - 1).floor();
+    final int maxMidiVisible = (centerMidi + visibleSemitones / 2 + 1).ceil();
 
-    /// LEFT SCALE (UNCHANGED)
-    for (int midi = 84; midi >= 36; midi--) {
-      if (!isNatural(midi)) continue;
+    for (int midi = minMidiVisible; midi <= maxMidiVisible; midi++) {
+      final double y = midiToY(midi.toDouble(), centerMidi, size);
+      if (y < -4 || y > size.height + 4) continue;
 
-      String note = noteName(midi);
-      int oct = octave(midi);
-      bool isRoot = !chromaticMode && note[0] == rootNote[0];
+      final String note = noteName(midi);
+      final int oct = octave(midi);
+      final bool isRoot = !chromaticMode &&
+          note.replaceAll('#', '').replaceAll('b', '')[0] == rootNote[0];
+      final bool isC = note == 'C';
 
-      double gap = (note == 'F' || note == 'C') ? 32 : 48;
-
-      y -= gap;
+      // Grid line — starts exactly at scaleWidth
+      final linePaint = Paint()
+        ..strokeWidth = isRoot ? 2.0 : (isC ? 1.0 : 0.5)
+        ..color = isRoot
+            ? Colors.white
+            : (isC ? Colors.white54 : Colors.white24);
 
       canvas.drawLine(
-        Offset(80, y),
+        Offset(scaleWidth - 5, y),
         Offset(size.width, y),
-        isRoot ? boldLine : normalLine,
+        linePaint,
+      );
+
+      // Label — right-aligned, ending just before scaleWidth
+      final labelStyle = TextStyle(
+        color: isRoot
+            ? Colors.white
+            : (isC ? Colors.white70 : Colors.white38),
+        fontSize: isRoot ? 14 : (isC ? 13 : 11),
+        fontWeight: isRoot ? FontWeight.bold : FontWeight.normal,
       );
 
       final tp = TextPainter(
-        text: TextSpan(
-          text: "$note$oct",
-          style: isRoot ? boldText : normalText,
-        ),
+        text: TextSpan(text: "$note$oct", style: labelStyle),
         textDirection: TextDirection.ltr,
       );
       tp.layout();
-      tp.paint(canvas, Offset(20, y - tp.height / 2));
+
+      // Right-align: x = scaleWidth - textWidth - 4px padding
+      tp.paint(canvas, Offset(4, y - tp.height / 2));
     }
 
+    // Draw a thin vertical separator between scale and graph
+    canvas.drawLine(
+      Offset(scaleWidth, 0),
+      Offset(scaleWidth, size.height),
+      Paint()
+        ..color = Colors.white24
+        ..strokeWidth = 0.5,
+    );
+
+    // Sliding window
     const int windowSize = 150;
 
     final ref = referencePitch.length > windowSize
@@ -123,122 +147,72 @@ class RagaComparisonPainter extends CustomPainter {
         ? pitchHistory.sublist(pitchHistory.length - windowSize)
         : pitchHistory;
 
-    if (ref.length < 2 || user.length < 2) return;
+    if (ref.length < 2 && user.length < 2) return;
 
-    final stepX = size.width / windowSize;
-
-  List<double> cleanRef =
-    ref.map((e) => (e <= 0 ? 0.0 : e.toDouble())).toList();
-
-  List<double> cleanUser =
-    user.map((e) => (e <= 0 ? 0.0 : e.toDouble())).toList();
-
-    double minMidi = 1000;
-    double maxMidi = -1000;
-
-    for (var v in [...cleanRef, ...cleanUser]) {
-      if (v > 0) {
-        double m = hzToMidi(v);
-        minMidi = min(minMidi, m);
-        maxMidi = max(maxMidi, m);
-      }
-    }
-
-    if (minMidi == maxMidi) {
-      minMidi -= 2;
-      maxMidi += 2;
-    }
-
-    /// 🟣 MP3 LINE
+    // Reference (mp3) pitch line — purple
     final refPaint = Paint()
       ..color = Colors.purpleAccent
       ..strokeWidth = 3
       ..strokeCap = StrokeCap.round;
 
-    /// 🎤 USER LINE (COMPARED TO PURPLE ONLY)
     double? prevX, prevY;
 
-    for (int i = 0; i < cleanUser.length; i++) {
-      final userHz = cleanUser[i];
-      if (userHz <= 0) continue;
+    for (int i = 0; i < ref.length; i++) {
+      final double hz = ref[i];
+      if (hz <= 60 || hz > 2000) { prevX = null; prevY = null; continue; }
 
-      final x = i * stepX;
-      final y = midiToY(hzToMidi(userHz), minMidi, maxMidi, size);
+      final double midi = hzToMidi(hz);
+      final double x = _xFromIndex(i, ref.length, size);
+      final double yPos = midiToY(midi, centerMidi, size);
 
-      if (prevX != null) {
-        final refHz = (i < cleanRef.length) ? cleanRef[i] : userHz;
-
-        final userMidi = hzToMidi(userHz);
-        final refMidi = hzToMidi(refHz);
-
-        Color color;
-
-        if ((userMidi - refMidi).abs() <= tolerance) {
-          color = Colors.green; // match
-        } else if (userMidi > refMidi) {
-          color = Colors.red;   // higher than MP3
-        } else {
-          color = Colors.yellow; // lower than MP3
-        }
-
-        final paint = Paint()
-          ..color = color
-          ..strokeWidth = 3
-          ..strokeCap = StrokeCap.round;
-
-        canvas.drawLine(
-          Offset(prevX!, prevY!),
-          Offset(x, y),
-          paint,
-        );
+      if (prevX != null && prevY != null) {
+        canvas.drawLine(Offset(prevX, prevY), Offset(x, yPos), refPaint);
       }
-
       prevX = x;
-      prevY = y;
+      prevY = yPos;
     }
 
-    /// 🎤 USER LINE
+    // User pitch line — green/red/yellow
     prevX = null;
     prevY = null;
 
-    for (int i = 0; i < cleanUser.length; i++) {
-      double hz = cleanUser[i];
-      if (hz <= 0) continue;
+    for (int i = 0; i < user.length; i++) {
+      final double hz = user[i];
+      if (hz <= 60 || hz > 2000) { prevX = null; prevY = null; continue; }
 
-      double x = i * stepX;
-      double midi = hzToMidi(hz);
-      double y = midiToY(midi, minMidi, maxMidi, size);
+      final double midi = hzToMidi(hz);
+      final double x = _xFromIndex(i, user.length, size);
+      final double yPos = midiToY(midi, centerMidi, size);
 
-      double refHz = (i < cleanRef.length) ? cleanRef[i] : hz;
-      double diff = hzToMidi(hz) - hzToMidi(refHz);
+      final double refMidi = (i < ref.length && ref[i] > 60)
+          ? hzToMidi(ref[i])
+          : midi;
+      final double diff = midi - refMidi;
 
-      Color color;
-      if (diff.abs() <= tolerance) {
-        color = Colors.green;
-      } else if (diff > tolerance) {
-        color = Colors.red;
-      } else {
-        color = Colors.yellow;
-      }
+      final Color color = diff.abs() <= tolerance
+          ? Colors.green
+          : diff > tolerance
+              ? Colors.red
+              : Colors.yellow;
 
-      final paint = Paint()
+      final userPaint = Paint()
         ..color = color
         ..strokeWidth = 3
         ..strokeCap = StrokeCap.round;
 
-      if (prevX != null) {
-        canvas.drawLine(
-          Offset(prevX, prevY!),
-          Offset(x, y),
-          paint,
-        );
+      if (prevX != null && prevY != null) {
+        canvas.drawLine(Offset(prevX, prevY), Offset(x, yPos), userPaint);
       }
-
       prevX = x;
-      prevY = y;
+      prevY = yPos;
     }
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  bool shouldRepaint(covariant RagaComparisonPainter oldDelegate) {
+    return oldDelegate.version != version ||
+        oldDelegate.raagaName != raagaName ||
+        oldDelegate.minPitch != minPitch ||
+        oldDelegate.maxPitch != maxPitch;
+  }
 }

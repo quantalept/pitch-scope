@@ -38,8 +38,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
   assets:
     - assets/songs/Bhairavi_ragam.mp3
+    - assets/pitch/
 
 # ✅ ADD THIS
 dependency_overrides:

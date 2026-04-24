@@ -56,10 +56,15 @@ class RagaComparisonPainter extends CustomPainter {
     return size.height * (1 - normalized.clamp(0.0, 1.0));
   }
 
-  double _xFromIndex(int i, int total, Size size) {
-    if (total <= 1) return 0;
-    return (i / (total - 1)) * size.width;
-  }
+  static const double scaleWidth = 80;
+
+double _xFromIndex(int i, int total, Size size) {
+  if (total <= 1) return scaleWidth;
+
+  double graphWidth = size.width - scaleWidth;
+
+  return scaleWidth + (i / (total - 1)) * graphWidth;
+}
 
   @override
   void paint(Canvas canvas, Size size) {

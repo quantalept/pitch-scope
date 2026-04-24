@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:convert';
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -10,6 +9,7 @@ import 'package:record/record.dart';
 import 'package:pitchscope/utils/app_settings.dart';
 import '../widgets/settings_screen.dart';
 import '../pitch/raga_comparision_painter.dart';
+import 'dart:async';
 
 class RaagaPracticeScreen extends StatefulWidget {
   final String raagaName;
@@ -38,64 +38,67 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
 
   double pitchHz = 0;
   String currentNote = "--";
-  bool micPermissionGranted = false;
 
   final List<double> pitchHistory = [];
   final List<double> mp3PitchHistory = [];
 
-  /// 🔥 NEW (REALTIME MP3)
   List<double> fullMp3Pitch = [];
   int mp3Index = 0;
 
+  // Version counter for efficient shouldRepaint
+  int _paintVersion = 0;
+
   Timer? _timer;
-
   String? mp3Path;
-
-  final double minPitch = 60.0;
-  final double maxPitch = 1000.0;
 
   @override
   void initState() {
     super.initState();
 
-    /// 🔥 INIT BUFFER
+    // Init buffer
     mp3PitchHistory.addAll(List.generate(200, (_) => 0));
 
-    /// 🎤 MIC STREAM
+    // User pitch stream from native
     _channel.setMethodCallHandler((call) async {
-      if (!isListening || isPaused) return;
+      if (isPaused) return;
 
       if (call.method == 'userPitch') {
         final hz = (call.arguments as num).toDouble();
+
+        debugPrint("🎤 USER HZ: $hz");
+
         if (hz < 60 || hz > 2000) return;
 
         setState(() {
           pitchHz = hz;
           currentNote = _hzToNote(hz);
 
-          if (pitchHistory.isEmpty) {
-            pitchHistory.add(hz);
-          } else {
-            final smooth = pitchHistory.last * 0.7 + hz * 0.3;
-            pitchHistory.add(smooth);
-          }
+          final smooth = pitchHistory.isEmpty
+              ? hz
+              : pitchHistory.last * 0.7 + hz * 0.3;
 
+          pitchHistory.add(smooth);
           if (pitchHistory.length > 200) {
             pitchHistory.removeAt(0);
           }
+
+          _paintVersion++;
         });
       }
     });
 
-    _loadSong();
-    _loadMp3Pitch();
-    _startRealtimeSync(); // 🔥 CRITICAL
+    _init();
   }
 
-  /// 🎼 REALTIME SYNC TIMER
+  Future<void> _init() async {
+    await _loadSong();
+    await _loadMp3Pitch();
+    _startRealtimeSync();
+  }
+
   void _startRealtimeSync() {
     _timer = Timer.periodic(const Duration(milliseconds: 50), (_) {
-      if (!isListening || isPaused) return;
+      if (isPaused) return;
 
       double mp3Hz = 0;
 
@@ -104,41 +107,38 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
         mp3Index++;
       }
 
-      /// 🔥 NO JUMP / NO BREAK
       if (mp3Hz < 60 || mp3Hz > 1000) {
-        mp3Hz =
-            mp3PitchHistory.isNotEmpty ? mp3PitchHistory.last : 0;
+        mp3Hz = mp3PitchHistory.isNotEmpty ? mp3PitchHistory.last : 0;
       }
 
-      /// 🔥 MOVE GRAPH
-      mp3PitchHistory.removeAt(0);
+      if (mp3PitchHistory.isNotEmpty) {
+        mp3PitchHistory.removeAt(0);
+      }
+
       mp3PitchHistory.add(mp3Hz);
 
+      _paintVersion++;
       setState(() {});
     });
   }
 
-  /// 🎵 Hz → Note
   String _hzToNote(double hz) {
     const notes = [
-      'C','C#','D','D#','E','F',
-      'F#','G','G#','A','A#','B'
+      'C', 'C#', 'D', 'D#', 'E', 'F',
+      'F#', 'G', 'G#', 'A', 'A#', 'B'
     ];
     int midi = (69 + 12 * log(hz / 440) / ln2).round();
     int octave = (midi ~/ 12) - 1;
     return "${notes[midi % 12]}$octave";
   }
 
-  /// 🎧 LOAD MP3
   Future<void> _loadSong() async {
     try {
-      String assetPath = 'assets/songs/Bhairavi_ragam.mp3';
-
-      final data = await rootBundle.load(assetPath);
+      final data = await rootBundle.load('assets/songs/Bhairavi_ragam.mp3');
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/${widget.raagaName}.mp3');
-      await file.writeAsBytes(data.buffer.asUint8List());
 
+      await file.writeAsBytes(data.buffer.asUint8List());
       mp3Path = file.path;
 
       await player.setFilePath(mp3Path!);
@@ -148,7 +148,6 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
     }
   }
 
-  /// 🎼 LOAD FULL PITCH (NO TRIM)
   Future<void> _loadMp3Pitch() async {
     try {
       final jsonString =
@@ -157,43 +156,44 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
       final data = jsonDecode(jsonString);
 
       fullMp3Pitch = List<double>.from(data['pitch']);
-      mp3Index = 0;
 
-      if (mounted) setState(() {});
+      mp3PitchHistory.clear();
+      for (int i = 0; i < 200; i++) {
+        mp3PitchHistory.add(i < fullMp3Pitch.length ? fullMp3Pitch[i] : 0);
+      }
+
+      mp3Index = 200;
+
+      _paintVersion++;
+      setState(() {});
     } catch (e) {
       debugPrint("Pitch load error: $e");
     }
   }
 
-  /// 🎤 MIC
   Future<void> _toggleMic() async {
-    if (!micPermissionGranted) {
-      if (!await recorder.hasPermission()) {
+    if (!await recorder.hasPermission()) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Microphone permission required")),
+          const SnackBar(
+            content: Text('Microphone permission is required to practice.'),
+          ),
         );
-        return;
-      } else {
-        micPermissionGranted = true;
       }
+      return;
     }
 
-    try {
-      if (!isListening) {
-        await _channel.invokeMethod('startUser');
-        if (mp3Path != null) await player.play();
-      } else {
-        await _channel.invokeMethod('stopUser');
-        await player.stop();
-      }
-
-      setState(() => isListening = !isListening);
-    } catch (e) {
-      debugPrint("Mic error: $e");
+    if (!isListening) {
+      await _channel.invokeMethod('startUser');
+      if (mp3Path != null) await player.play();
+    } else {
+      await _channel.invokeMethod('stopUser');
+      await player.stop();
     }
+
+    setState(() => isListening = !isListening);
   }
 
-  /// ⛔ STOP
   Future<void> _stopAll() async {
     try {
       await _channel.invokeMethod('stopUser');
@@ -208,9 +208,10 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
       pitchHistory.clear();
       mp3PitchHistory.clear();
       mp3PitchHistory.addAll(List.generate(200, (_) => 0));
+      mp3Index = 0;
       pitchHz = 0;
       currentNote = "--";
-      mp3Index = 0;
+      _paintVersion++;
     });
   }
 
@@ -236,7 +237,7 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
             onPressed: _toggleMic,
           ),
           Text(
-            currentNote != "--" ? currentNote : "--",
+            currentNote,
             style: const TextStyle(
               color: Colors.white,
               fontSize: 26,
@@ -245,18 +246,16 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
           ),
           IconButton(
             icon: Icon(
-              isPaused ? Icons.pause_circle : Icons.pause_circle_outline,
+              isPaused ? Icons.play_circle : Icons.pause_circle,
               color: Colors.orange,
             ),
             onPressed: () => setState(() => isPaused = !isPaused),
           ),
           IconButton(
-            icon: const Icon(Icons.stop_circle_outlined,
-                color: Colors.white),
+            icon: const Icon(Icons.stop_circle_outlined, color: Colors.white),
             onPressed: _stopAll,
           ),
-          const Icon(Icons.play_arrow,
-              color: Colors.lightBlueAccent),
+          const Icon(Icons.play_arrow, color: Colors.lightBlueAccent),
         ],
       ),
     );
@@ -265,7 +264,6 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
   @override
   void dispose() {
     _timer?.cancel();
-    _stopAll();
     player.dispose();
     recorder.dispose();
     super.dispose();
@@ -275,11 +273,9 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF1A0026),
-      resizeToAvoidBottomInset: false,
       body: Column(
         children: [
           SafeArea(
-            bottom: false,
             child: Row(
               children: [
                 IconButton(
@@ -294,11 +290,7 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
                     children: [
                       Text(
                         "${widget.songName} - ${widget.raagaName}",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: const TextStyle(color: Colors.white),
                       ),
                       Text(
                         widget.lyric,
@@ -314,22 +306,24 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
               ],
             ),
           ),
+
+          // ✅ SizedBox.expand ensures canvas gets full available size
           Expanded(
-            child: CustomPaint(
-              painter: RagaComparisonPainter(
-                pitchHistory: pitchHistory,
-                referencePitch: mp3PitchHistory,
-                minPitch: minPitch,
-                maxPitch: maxPitch,
-                raagaName: widget.raagaName,
+            child: SizedBox.expand(
+              child: CustomPaint(
+                painter: RagaComparisonPainter(
+                  pitchHistory: isListening ? pitchHistory : [],
+                  referencePitch: isListening ? mp3PitchHistory : [],
+                  minPitch: 60,
+                  maxPitch: 1000,
+                  raagaName: widget.raagaName,
+                  version: _paintVersion,
+                ),
               ),
-              size: Size.infinite,
             ),
           ),
-          SafeArea(
-            top: false,
-            child: _footer(),
-          ),
+
+          _footer(),
         ],
       ),
     );
