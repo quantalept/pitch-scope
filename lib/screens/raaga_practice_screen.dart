@@ -39,13 +39,20 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
   double pitchHz = 0;
   String currentNote = "--";
 
-  final List<double> pitchHistory = [];
-  final List<double> mp3PitchHistory = [];
+  // Both arrays always 200 items, index-aligned by time
+  final List<double> pitchHistory =
+      List.filled(200, 0.0, growable: true);
+  final List<double> mp3PitchHistory =
+      List.filled(200, 0.0, growable: true);
 
   List<double> fullMp3Pitch = [];
   int mp3Index = 0;
 
-  // Version counter for efficient shouldRepaint
+  // Pending user pitch — set by native callback, consumed by timer
+  double _pendingUserHz = 0.0;
+  double _lastValidUserHz = 0.0;
+  int _silenceCount = 0;
+
   int _paintVersion = 0;
 
   Timer? _timer;
@@ -55,70 +62,95 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
   void initState() {
     super.initState();
 
-    // Init buffer
-    mp3PitchHistory.addAll(List.generate(200, (_) => 0));
-
-    // User pitch stream from native
+    // Native pitch callback — just stores value, timer consumes it
     _channel.setMethodCallHandler((call) async {
       if (isPaused) return;
-
       if (call.method == 'userPitch') {
         final hz = (call.arguments as num).toDouble();
-
         debugPrint("🎤 USER HZ: $hz");
-
-        if (hz < 60 || hz > 2000) return;
-
-        setState(() {
-          pitchHz = hz;
-          currentNote = _hzToNote(hz);
-
-          final smooth = pitchHistory.isEmpty
-              ? hz
-              : pitchHistory.last * 0.7 + hz * 0.3;
-
-          pitchHistory.add(smooth);
-          if (pitchHistory.length > 200) {
-            pitchHistory.removeAt(0);
-          }
-
-          _paintVersion++;
-        });
+        if (hz >= 60 && hz <= 2000) {
+          _pendingUserHz = hz;
+          _lastValidUserHz = hz;
+          _silenceCount = 0;
+        } else {
+          _silenceCount++;
+          // Hold last valid pitch for 12 ticks (~600ms) before going silent
+          _pendingUserHz = _silenceCount <= 12 ? _lastValidUserHz : 0.0;
+        }
       }
     });
 
+    // Only load assets — do NOT start timer here
     _init();
   }
 
   Future<void> _init() async {
     await _loadSong();
     await _loadMp3Pitch();
-    _startRealtimeSync();
   }
 
+  // Called ONLY when mic button is pressed
   void _startRealtimeSync() {
+    _timer?.cancel();
+
+    // Reset both arrays to zero before starting
+    pitchHistory.clear();
+    pitchHistory.addAll(List.filled(200, 0.0));
+    mp3PitchHistory.clear();
+    mp3PitchHistory.addAll(List.filled(200, 0.0));
+    mp3Index = 0;
+
+    _pendingUserHz = 0.0;
+    _lastValidUserHz = 0.0;
+    _silenceCount = 0;
+
     _timer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (isPaused) return;
 
-      double mp3Hz = 0;
-
+      // Advance mp3 pitch by one step
+      double mp3Hz = 0.0;
       if (mp3Index < fullMp3Pitch.length) {
         mp3Hz = fullMp3Pitch[mp3Index];
         mp3Index++;
       }
 
-      if (mp3Hz < 60 || mp3Hz > 1000) {
-        mp3Hz = mp3PitchHistory.isNotEmpty ? mp3PitchHistory.last : 0;
+      // Smooth reference
+      final double prevRef = mp3PitchHistory.last;
+      final double smoothRef = (mp3Hz > 60 && prevRef > 60)
+          ? prevRef * 0.7 + mp3Hz * 0.3
+          : mp3Hz;
+
+      // Spike rejection — ignore jumps larger than 5 semitones
+      double rawUser = _pendingUserHz;
+      if (rawUser > 60 && _lastValidUserHz > 60) {
+        final double semitoneJump =
+            (12 * log(rawUser / _lastValidUserHz) / ln2).abs();
+        if (semitoneJump > 5) {
+          rawUser = _lastValidUserHz; // reject spike, hold last good value
+        }
       }
 
-      if (mp3PitchHistory.isNotEmpty) {
-        mp3PitchHistory.removeAt(0);
-      }
+      // Strong smoothing — 85% old, 15% new — keeps line horizontal
+      final double prevUser = pitchHistory.last;
+      final double smoothUser = (rawUser > 60 && prevUser > 60)
+          ? prevUser * 0.85 + rawUser * 0.15
+          : rawUser;
 
-      mp3PitchHistory.add(mp3Hz);
+      // Shift both arrays left by 1, append new value at end
+      mp3PitchHistory.removeAt(0);
+      mp3PitchHistory.add(smoothRef);
+
+      pitchHistory.removeAt(0);
+      pitchHistory.add(smoothUser);
+
+      // Update displayed note
+      if (smoothUser > 60) {
+        pitchHz = smoothUser;
+        currentNote = _hzToNote(smoothUser);
+      }
 
       _paintVersion++;
-      setState(() {});
+      if (mounted) setState(() {});
     });
   }
 
@@ -137,10 +169,8 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
       final data = await rootBundle.load('assets/songs/Bhairavi_ragam.mp3');
       final dir = await getApplicationDocumentsDirectory();
       final file = File('${dir.path}/${widget.raagaName}.mp3');
-
       await file.writeAsBytes(data.buffer.asUint8List());
       mp3Path = file.path;
-
       await player.setFilePath(mp3Path!);
       await player.setVolume(0);
     } catch (e) {
@@ -152,20 +182,9 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
     try {
       final jsonString =
           await rootBundle.loadString("assets/pitch/bhairavi_pitch.json");
-
       final data = jsonDecode(jsonString);
-
       fullMp3Pitch = List<double>.from(data['pitch']);
-
-      mp3PitchHistory.clear();
-      for (int i = 0; i < 200; i++) {
-        mp3PitchHistory.add(i < fullMp3Pitch.length ? fullMp3Pitch[i] : 0);
-      }
-
-      mp3Index = 200;
-
-      _paintVersion++;
-      setState(() {});
+      debugPrint("✅ Loaded ${fullMp3Pitch.length} mp3 pitch frames");
     } catch (e) {
       debugPrint("Pitch load error: $e");
     }
@@ -184,11 +203,15 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
     }
 
     if (!isListening) {
+      // Start mic + song + timer all at the same moment
       await _channel.invokeMethod('startUser');
       if (mp3Path != null) await player.play();
+      _startRealtimeSync();
     } else {
       await _channel.invokeMethod('stopUser');
       await player.stop();
+      _timer?.cancel();
+      _timer = null;
     }
 
     setState(() => isListening = !isListening);
@@ -201,16 +224,21 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
 
     await player.stop();
     _timer?.cancel();
+    _timer = null;
 
     setState(() {
       isListening = false;
       isPaused = false;
       pitchHistory.clear();
+      pitchHistory.addAll(List.filled(200, 0.0));
       mp3PitchHistory.clear();
-      mp3PitchHistory.addAll(List.generate(200, (_) => 0));
+      mp3PitchHistory.addAll(List.filled(200, 0.0));
       mp3Index = 0;
       pitchHz = 0;
       currentNote = "--";
+      _pendingUserHz = 0.0;
+      _lastValidUserHz = 0.0;
+      _silenceCount = 0;
       _paintVersion++;
     });
   }
@@ -307,13 +335,12 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
             ),
           ),
 
-          // ✅ SizedBox.expand ensures canvas gets full available size
           Expanded(
             child: SizedBox.expand(
               child: CustomPaint(
                 painter: RagaComparisonPainter(
-                  pitchHistory: isListening ? pitchHistory : [],
-                  referencePitch: isListening ? mp3PitchHistory : [],
+                  pitchHistory: List.of(pitchHistory),
+                  referencePitch: List.of(mp3PitchHistory),
                   minPitch: 60,
                   maxPitch: 1000,
                   raagaName: widget.raagaName,

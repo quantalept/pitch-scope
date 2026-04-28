@@ -19,13 +19,12 @@ class RagaComparisonPainter extends CustomPainter {
     required this.version,
   });
 
-  final double tolerance = 1.0;
+  final double tolerance = 1.5;
 
-  // Left column width reserved for note labels
-  static const double scaleWidth = 55;
-
-  // Number of semitones visible on screen at once
-  static const double visibleSemitones = 13.0;
+  static const double scaleWidth = 80;
+  static const double visibleSemitones = 14.0;
+  static const List<String> naturalNotes = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+  static const int visibleWindow = 200;
 
   double hzToMidi(double hz) {
     if (hz <= 0) return 0;
@@ -33,22 +32,49 @@ class RagaComparisonPainter extends CustomPainter {
   }
 
   static const List<String> _chromatic = [
-    'C', 'C#', 'D', 'Eb', 'E', 'F',
-    'F#', 'G', 'Ab', 'A', 'Bb', 'B'
+    'C', 'C#', 'D', 'E♭', 'E', 'F',
+    'F#', 'G', 'A♭', 'A', 'B♭', 'B'
   ];
 
   String noteName(int midi) => _chromatic[midi % 12];
   int octave(int midi) => (midi ~/ 12) - 1;
 
-  // Y position for a midi note given the current center
+  bool isNatural(int midi) {
+    final note = noteName(midi)
+        .replaceAll('♭', '')
+        .replaceAll('#', '');
+    return naturalNotes.contains(note);
+  }
+
   double midiToY(double midi, double centerMidi, Size size) {
     final double semitoneHeight = size.height / visibleSemitones;
     return (size.height / 2) + (centerMidi - midi) * semitoneHeight;
   }
 
+  // Newest data point always at right edge, older data scrolls left
   double _xFromIndex(int i, int total, Size size) {
-    if (total <= 1) return scaleWidth;
-    return scaleWidth + (i / (total - 1)) * (size.width - scaleWidth);
+    final double graphWidth = size.width - scaleWidth;
+    final double slotWidth = graphWidth / visibleWindow;
+    final int offset = visibleWindow - total;
+    return scaleWidth + (offset + i) * slotWidth;
+  }
+
+  double _computeCenter(List<double> refWindow, List<double> userWindow) {
+    final validRef = refWindow.where((e) => e > 60 && e < 2000).toList();
+    if (validRef.isNotEmpty) {
+      final midiValues = validRef.map(hzToMidi).toList();
+      final avg = midiValues.reduce((a, b) => a + b) / midiValues.length;
+      return avg.roundToDouble();
+    }
+
+    final validUser = userWindow.where((e) => e > 60 && e < 2000).toList();
+    if (validUser.isNotEmpty) {
+      final midiValues = validUser.map(hzToMidi).toList();
+      final avg = midiValues.reduce((a, b) => a + b) / midiValues.length;
+      return avg.roundToDouble();
+    }
+
+    return 57.0; // A3 default
   }
 
   @override
@@ -65,69 +91,58 @@ class RagaComparisonPainter extends CustomPainter {
     // Background
     canvas.drawRect(
       Offset.zero & size,
-      Paint()..color = const Color(0xFF121212),
+      Paint()..color = const Color(0xFF0D0D0D),
     );
 
-    // Determine which pitch to center the scale on
-    double centerMidi = 60.0; // default C4
+    // Stable center
+    final double centerMidi = _computeCenter(referencePitch, pitchHistory);
 
-    final validRef = referencePitch.where((e) => e > 60 && e < 2000).toList();
-    final validUser = pitchHistory.where((e) => e > 60 && e < 2000).toList();
+    // Scale paints
+    final normalLinePaint = Paint()
+      ..color = Colors.white.withOpacity(0.08)
+      ..strokeWidth = 1;
+    final boldLinePaint = Paint()
+      ..color = Colors.white.withOpacity(0.3)
+      ..strokeWidth = 1.5;
+    const normalText = TextStyle(color: Color(0xFF888888), fontSize: 12);
+    const boldText = TextStyle(
+      color: Colors.white,
+      fontSize: 14,
+      fontWeight: FontWeight.bold,
+    );
 
-    if (validUser.isNotEmpty) {
-      centerMidi = hzToMidi(validUser.last).roundToDouble();
-    } else if (validRef.isNotEmpty) {
-      centerMidi = hzToMidi(validRef.last).roundToDouble();
-    }
+    final int topMidi = (centerMidi + visibleSemitones / 2 + 1).ceil();
+    final int botMidi = (centerMidi - visibleSemitones / 2 - 1).floor();
 
-    // Draw all chromatic notes in the visible window
-    final double semitoneHeight = size.height / visibleSemitones;
-    final int minMidiVisible = (centerMidi - visibleSemitones / 2 - 1).floor();
-    final int maxMidiVisible = (centerMidi + visibleSemitones / 2 + 1).ceil();
+    // Draw grid lines and labels
+    for (int midi = topMidi; midi >= botMidi; midi--) {
+      if (!isNatural(midi)) continue;
 
-    for (int midi = minMidiVisible; midi <= maxMidiVisible; midi++) {
       final double y = midiToY(midi.toDouble(), centerMidi, size);
       if (y < -4 || y > size.height + 4) continue;
 
       final String note = noteName(midi);
       final int oct = octave(midi);
-      final bool isRoot = !chromaticMode &&
-          note.replaceAll('#', '').replaceAll('b', '')[0] == rootNote[0];
-      final bool isC = note == 'C';
-
-      // Grid line — starts exactly at scaleWidth
-      final linePaint = Paint()
-        ..strokeWidth = isRoot ? 2.0 : (isC ? 1.0 : 0.5)
-        ..color = isRoot
-            ? Colors.white
-            : (isC ? Colors.white54 : Colors.white24);
+      final bool isRoot = !chromaticMode && note[0] == rootNote[0];
 
       canvas.drawLine(
-        Offset(scaleWidth - 5, y),
+        Offset(scaleWidth, y),
         Offset(size.width, y),
-        linePaint,
-      );
-
-      // Label — right-aligned, ending just before scaleWidth
-      final labelStyle = TextStyle(
-        color: isRoot
-            ? Colors.white
-            : (isC ? Colors.white70 : Colors.white38),
-        fontSize: isRoot ? 14 : (isC ? 13 : 11),
-        fontWeight: isRoot ? FontWeight.bold : FontWeight.normal,
+        isRoot ? boldLinePaint : normalLinePaint,
       );
 
       final tp = TextPainter(
-        text: TextSpan(text: "$note$oct", style: labelStyle),
+        text: TextSpan(
+          text: "$note$oct",
+          style: isRoot ? boldText : normalText,
+        ),
         textDirection: TextDirection.ltr,
       );
       tp.layout();
-
-      // Right-align: x = scaleWidth - textWidth - 4px padding
-      tp.paint(canvas, Offset(4, y - tp.height / 2));
+      tp.paint(canvas, Offset(scaleWidth - tp.width - 6, y - tp.height / 2));
     }
 
-    // Draw a thin vertical separator between scale and graph
+    // Vertical separator
     canvas.drawLine(
       Offset(scaleWidth, 0),
       Offset(scaleWidth, size.height),
@@ -136,83 +151,134 @@ class RagaComparisonPainter extends CustomPainter {
         ..strokeWidth = 0.5,
     );
 
-    // Sliding window
-    const int windowSize = 150;
+    // Clip to graph area
+    canvas.save();
+    canvas.clipRect(
+      Rect.fromLTWH(scaleWidth, 0, size.width - scaleWidth, size.height),
+    );
 
-    final ref = referencePitch.length > windowSize
-        ? referencePitch.sublist(referencePitch.length - windowSize)
-        : referencePitch;
+    // Reference line (purple)
+    _drawRefLine(canvas, size, referencePitch, centerMidi);
 
-    final user = pitchHistory.length > windowSize
-        ? pitchHistory.sublist(pitchHistory.length - windowSize)
-        : pitchHistory;
+    // User line (green/red/yellow)
+    _drawUserLine(canvas, size, pitchHistory, referencePitch, centerMidi);
 
-    if (ref.length < 2 && user.length < 2) return;
+    canvas.restore();
+  }
 
-    // Reference (mp3) pitch line — purple
-    final refPaint = Paint()
-      ..color = Colors.purpleAccent
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round;
+  void _drawRefLine(
+    Canvas canvas,
+    Size size,
+    List<double> data,
+    double centerMidi,
+  ) {
+    if (data.length < 2) return;
 
     double? prevX, prevY;
 
-    for (int i = 0; i < ref.length; i++) {
-      final double hz = ref[i];
-      if (hz <= 60 || hz > 2000) { prevX = null; prevY = null; continue; }
+    for (int i = 0; i < data.length; i++) {
+      final double hz = data[i];
+      if (hz <= 60 || hz > 2000) {
+        prevX = null;
+        prevY = null;
+        continue;
+      }
 
       final double midi = hzToMidi(hz);
-      final double x = _xFromIndex(i, ref.length, size);
-      final double yPos = midiToY(midi, centerMidi, size);
+      final double x = _xFromIndex(i, data.length, size);
+      final double y = midiToY(midi, centerMidi, size);
 
       if (prevX != null && prevY != null) {
-        canvas.drawLine(Offset(prevX, prevY), Offset(x, yPos), refPaint);
+        canvas.drawLine(
+          Offset(prevX, prevY),
+          Offset(x, y),
+          Paint()
+            ..color = const Color(0xFFCC44FF)
+            ..strokeWidth = 4
+            ..strokeCap = StrokeCap.round,
+        );
       }
+
       prevX = x;
-      prevY = yPos;
+      prevY = y;
     }
 
-    // User pitch line — green/red/yellow
-    prevX = null;
-    prevY = null;
+    // Dot at current position
+    final double lastHz = data.last;
+    if (lastHz > 60 && lastHz < 2000) {
+      final double x = _xFromIndex(data.length - 1, data.length, size);
+      final double y = midiToY(hzToMidi(lastHz), centerMidi, size);
+      canvas.drawCircle(Offset(x, y), 5,
+          Paint()..color = const Color(0xFFCC44FF));
+    }
+  }
 
-    for (int i = 0; i < user.length; i++) {
-      final double hz = user[i];
-      if (hz <= 60 || hz > 2000) { prevX = null; prevY = null; continue; }
+  void _drawUserLine(
+    Canvas canvas,
+    Size size,
+    List<double> userData,
+    List<double> refData,
+    double centerMidi,
+  ) {
+    if (userData.length < 2) return;
+
+    double? prevX, prevY;
+    Color prevColor = Colors.green;
+
+    for (int i = 0; i < userData.length; i++) {
+      final double hz = userData[i];
+      if (hz <= 60 || hz > 2000) {
+        prevX = null;
+        prevY = null;
+        continue;
+      }
 
       final double midi = hzToMidi(hz);
-      final double x = _xFromIndex(i, user.length, size);
-      final double yPos = midiToY(midi, centerMidi, size);
+      final double x = _xFromIndex(i, userData.length, size);
+      final double y = midiToY(midi, centerMidi, size);
 
-      final double refMidi = (i < ref.length && ref[i] > 60)
-          ? hzToMidi(ref[i])
+      final double refMidi = (i < refData.length && refData[i] > 60)
+          ? hzToMidi(refData[i])
           : midi;
       final double diff = midi - refMidi;
 
-      final Color color = diff.abs() <= tolerance
-          ? Colors.green
-          : diff > tolerance
-              ? Colors.red
-              : Colors.yellow;
-
-      final userPaint = Paint()
-        ..color = color
-        ..strokeWidth = 3
-        ..strokeCap = StrokeCap.round;
+      final Color color;
+      if (diff.abs() <= tolerance) {
+        color = const Color(0xFF00E676); // green
+      } else if (diff > tolerance) {
+        color = const Color(0xFFFF1744); // red — too high
+      } else {
+        color = const Color(0xFFFFD600); // yellow — too low
+      }
 
       if (prevX != null && prevY != null) {
-        canvas.drawLine(Offset(prevX, prevY), Offset(x, yPos), userPaint);
+        canvas.drawLine(
+          Offset(prevX, prevY),
+          Offset(x, y),
+          Paint()
+            ..color = color
+            ..strokeWidth = 4
+            ..strokeCap = StrokeCap.round,
+        );
       }
+
       prevX = x;
-      prevY = yPos;
+      prevY = y;
+      prevColor = color;
+    }
+
+    // Dot at current position
+    final double lastHz = userData.last;
+    if (lastHz > 60 && lastHz < 2000) {
+      final double x =
+          _xFromIndex(userData.length - 1, userData.length, size);
+      final double y = midiToY(hzToMidi(lastHz), centerMidi, size);
+      canvas.drawCircle(Offset(x, y), 6, Paint()..color = prevColor);
     }
   }
 
   @override
   bool shouldRepaint(covariant RagaComparisonPainter oldDelegate) {
-    return oldDelegate.version != version ||
-        oldDelegate.raagaName != raagaName ||
-        oldDelegate.minPitch != minPitch ||
-        oldDelegate.maxPitch != maxPitch;
+    return oldDelegate.version != version;
   }
 }
