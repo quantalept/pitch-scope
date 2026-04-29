@@ -39,16 +39,12 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
   double pitchHz = 0;
   String currentNote = "--";
 
-  // Both arrays always 200 items, index-aligned by time
-  final List<double> pitchHistory =
-      List.filled(200, 0.0, growable: true);
-  final List<double> mp3PitchHistory =
-      List.filled(200, 0.0, growable: true);
+  final List<double> pitchHistory = List.filled(200, 0.0, growable: true);
+  final List<double> mp3PitchHistory = List.filled(200, 0.0, growable: true);
 
   List<double> fullMp3Pitch = [];
   int mp3Index = 0;
 
-  // Pending user pitch — set by native callback, consumed by timer
   double _pendingUserHz = 0.0;
   double _lastValidUserHz = 0.0;
   int _silenceCount = 0;
@@ -62,25 +58,21 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
   void initState() {
     super.initState();
 
-    // Native pitch callback — just stores value, timer consumes it
     _channel.setMethodCallHandler((call) async {
       if (isPaused) return;
       if (call.method == 'userPitch') {
         final hz = (call.arguments as num).toDouble();
-        debugPrint("🎤 USER HZ: $hz");
         if (hz >= 60 && hz <= 2000) {
           _pendingUserHz = hz;
           _lastValidUserHz = hz;
           _silenceCount = 0;
         } else {
           _silenceCount++;
-          // Hold last valid pitch for 12 ticks (~600ms) before going silent
           _pendingUserHz = _silenceCount <= 12 ? _lastValidUserHz : 0.0;
         }
       }
     });
 
-    // Only load assets — do NOT start timer here
     _init();
   }
 
@@ -89,11 +81,9 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
     await _loadMp3Pitch();
   }
 
-  // Called ONLY when mic button is pressed
   void _startRealtimeSync() {
     _timer?.cancel();
 
-    // Reset both arrays to zero before starting
     pitchHistory.clear();
     pitchHistory.addAll(List.filled(200, 0.0));
     mp3PitchHistory.clear();
@@ -107,43 +97,35 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
     _timer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (isPaused) return;
 
-      // Advance mp3 pitch by one step
       double mp3Hz = 0.0;
       if (mp3Index < fullMp3Pitch.length) {
         mp3Hz = fullMp3Pitch[mp3Index];
         mp3Index++;
       }
 
-      // Smooth reference
       final double prevRef = mp3PitchHistory.last;
       final double smoothRef = (mp3Hz > 60 && prevRef > 60)
           ? prevRef * 0.7 + mp3Hz * 0.3
           : mp3Hz;
 
-      // Spike rejection — ignore jumps larger than 5 semitones
       double rawUser = _pendingUserHz;
       if (rawUser > 60 && _lastValidUserHz > 60) {
         final double semitoneJump =
             (12 * log(rawUser / _lastValidUserHz) / ln2).abs();
-        if (semitoneJump > 5) {
-          rawUser = _lastValidUserHz; // reject spike, hold last good value
-        }
+        if (semitoneJump > 5) rawUser = _lastValidUserHz;
       }
 
-      // Strong smoothing — 85% old, 15% new — keeps line horizontal
       final double prevUser = pitchHistory.last;
       final double smoothUser = (rawUser > 60 && prevUser > 60)
           ? prevUser * 0.85 + rawUser * 0.15
           : rawUser;
 
-      // Shift both arrays left by 1, append new value at end
       mp3PitchHistory.removeAt(0);
       mp3PitchHistory.add(smoothRef);
 
       pitchHistory.removeAt(0);
       pitchHistory.add(smoothUser);
 
-      // Update displayed note
       if (smoothUser > 60) {
         pitchHz = smoothUser;
         currentNote = _hzToNote(smoothUser);
@@ -160,8 +142,8 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
       'F#', 'G', 'G#', 'A', 'A#', 'B'
     ];
     int midi = (69 + 12 * log(hz / 440) / ln2).round();
-    int octave = (midi ~/ 12) - 1;
-    return "${notes[midi % 12]}$octave";
+    int oct = (midi ~/ 12) - 1;
+    return "${notes[midi % 12]}$oct";
   }
 
   Future<void> _loadSong() async {
@@ -184,7 +166,6 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
           await rootBundle.loadString("assets/pitch/bhairavi_pitch.json");
       final data = jsonDecode(jsonString);
       fullMp3Pitch = List<double>.from(data['pitch']);
-      debugPrint("✅ Loaded ${fullMp3Pitch.length} mp3 pitch frames");
     } catch (e) {
       debugPrint("Pitch load error: $e");
     }
@@ -203,7 +184,6 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
     }
 
     if (!isListening) {
-      // Start mic + song + timer all at the same moment
       await _channel.invokeMethod('startUser');
       if (mp3Path != null) await player.play();
       _startRealtimeSync();
@@ -215,6 +195,15 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
     }
 
     setState(() => isListening = !isListening);
+  }
+
+  Future<void> _togglePause() async {
+    setState(() => isPaused = !isPaused);
+    if (isPaused) {
+      await player.pause();
+    } else {
+      await player.play();
+    }
   }
 
   Future<void> _stopAll() async {
@@ -250,6 +239,7 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
     );
   }
 
+  // Footer matches SongPracticeScreen exactly
   Widget _footer() {
     return Container(
       height: 85,
@@ -257,6 +247,7 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
+          // Mic
           IconButton(
             icon: Icon(
               isListening ? Icons.mic : Icons.mic_off,
@@ -264,25 +255,31 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
             ),
             onPressed: _toggleMic,
           ),
+          // Current note
           Text(
-            currentNote,
+            currentNote.isNotEmpty ? currentNote : "--",
             style: const TextStyle(
               color: Colors.white,
               fontSize: 26,
               fontWeight: FontWeight.bold,
             ),
           ),
+          // Pause — matches SongPracticeScreen icon style
           IconButton(
             icon: Icon(
-              isPaused ? Icons.play_circle : Icons.pause_circle,
+              isPaused
+                  ? Icons.pause_circle
+                  : Icons.pause_circle_outline,
               color: Colors.orange,
             ),
-            onPressed: () => setState(() => isPaused = !isPaused),
+            onPressed: isListening ? _togglePause : null,
           ),
+          // Stop
           IconButton(
             icon: const Icon(Icons.stop_circle_outlined, color: Colors.white),
             onPressed: _stopAll,
           ),
+          // Play — matches SongPracticeScreen
           const Icon(Icons.play_arrow, color: Colors.lightBlueAccent),
         ],
       ),
@@ -304,34 +301,39 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
       body: Column(
         children: [
           SafeArea(
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: () async {
-                    await _stopAll();
-                    Navigator.pop(context);
-                  },
-                ),
-                Expanded(
-                  child: Column(
-                    children: [
-                      Text(
-                        "${widget.songName} - ${widget.raagaName}",
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                      Text(
-                        widget.lyric,
-                        style: const TextStyle(color: Colors.white70),
-                      ),
-                    ],
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    onPressed: () async {
+                      await _stopAll();
+                      Navigator.pop(context);
+                    },
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.settings, color: Colors.white),
-                  onPressed: _openSettings,
-                ),
-              ],
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text(
+                          "${widget.songName} - ${widget.raagaName}",
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        Text(
+                          widget.lyric,
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.settings, color: Colors.white),
+                    onPressed: _openSettings,
+                  ),
+                ],
+              ),
             ),
           ),
 
@@ -350,7 +352,10 @@ class _RaagaPracticeScreenState extends State<RaagaPracticeScreen> {
             ),
           ),
 
-          _footer(),
+          SafeArea(
+            top: false,
+            child: _footer(),
+          ),
         ],
       ),
     );
